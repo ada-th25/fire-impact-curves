@@ -170,6 +170,24 @@ No confirmed cause for the pilot's low magnitude yet. Candidates considered: the
 
 **Conclusion.** Do not treat Sections 8 and 9's magnitude findings as settled. CCI biomass's sensitivity to fire loss appears to vary a great deal by fire, for reasons not yet understood, and a larger sample across forest types and biomes is needed before concluding anything about typical magnitude.
 
+## 11. Pipeline validated outside North America: a Southeast Asia fire
+
+Biomass and forest type were moved from manually downloaded tiles to Earth Engine (`src/biomass.py`, `src/forest_type.py`, see "Reproducibility"), removing the tile-boundary problem for those two layers. Height still needs the right GLAD continental mosaic for a fire's location (`src/height.py`); all seven mosaic filenames were confirmed against GLAD's own directory listing and added, though only the pilot's NAM fire has so far tested any of them end to end.
+
+Fire `2020_841874` (GFED region 12, Southeast Asia, Laos/Thailand area, 82.1 km2, started 2020-03-22) was run as the first real test outside North America and outside the pilot's CCI tile. Result:
+
+| | n | mean loss by 2022 |
+|---|---|---|
+| mild | 308 | 8.2% |
+| moderate | 153 | 25.3% |
+| severe | 1 | not usable, n=1 |
+
+460 of 462 cells were correctly classified as Evergreen Broadleaf forest type, a genuinely different forest type from every fire tested so far (all Evergreen Needleleaf, bar one small Evergreen Broadleaf fire too small to be informative). This confirms the pipeline, tile lookup and forest-type classification work correctly outside the original test region, not just by coincidence of one convenient tile.
+
+The result itself is not yet usable as a broadleaf curve: this is one small fire (462 cells total, against tens of thousands for the NAM fires), its `severe` bin has a single cell, and `mild` to `moderate` is the only comparison available. The mild-to-moderate magnitude (8.2% to 25.3%) is broadly in range with the other fires in Section 10, not an outlier in either direction, but one fire is not enough to say anything about a Southeast Asia or broadleaf-specific curve.
+
+**Conclusion.** Infrastructure milestone, not a results milestone. The pipeline (height, biomass, severity, forest type) now works for an arbitrary fire anywhere the GLAD mosaics cover. Producing an actual height x forest-type curve still needs many more fires pooled per group, which is a scope decision (how many fires, which regions, how much further to investigate the open data-quality questions in Sections 8 to 10) that should be checked with the supervisor before continuing to scale.
+
 ## Infrastructure
 
 - GCP project `tree-fire` (display name), project ID `tree-fire-510209`; Vertex AI Workbench instance `tree-fire-workbench`, zone `europe-west2-a`; Python venv `.venv` with earthengine-api, geemap, pandas, geopandas, pyarrow, ipykernel, rasterio, pyogrio.

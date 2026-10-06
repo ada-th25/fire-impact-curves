@@ -12,7 +12,6 @@ Still TODO, not solved by this module yet (see README "Known issues"):
   in one biome; it may need revisiting per biome once more fires are run.
 - GLAD height looks unreliable on steep terrain (README "Known issues" #8); height
   is included here but should not be trusted for curves yet.
-- forest_type.py's exact band name/value legend against CGLS-LC100 is unverified.
 """
 
 import numpy as np

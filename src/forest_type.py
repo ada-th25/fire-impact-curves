@@ -4,19 +4,39 @@ Copernicus Global Land Cover product (CGLS-LC100, Collection 3), via Earth Engin
 100 m resolution, matching the CCI biomass grid, so no extra resampling-alignment
 step is needed beyond what pipeline.py already does for dNBR and height.
 
-TODO, not yet verified (check against the Earth Engine catalog page for
-COPERNICUS/Landcover/100m/Proba-V-C3/Global before relying on this):
-- the exact band name for the forest-type layer (assumed "discrete_classification"
-  or "forest_type" below, confirm which)
-- the value legend (which integers mean evergreen/deciduous x broadleaf/needleleaf)
-- whether a 2020/2021 edition exists, or only up to ~2019 (if so, 2019 is used as
-  "pre-fire", since forest type changes far more slowly than height or biomass)
+Band "forest_type" and its legend, confirmed against the pilot fire (2020_112,
+labelled "Evergreen Needleleaf forest" by the Fire Atlas, which matched class 1
+being the dominant value found):
+    0   Unknown
+    1   Evergreen needleleaf
+    2   Evergreen broadleaf
+    3   Deciduous needleleaf
+    4   Deciduous broadleaf
+    5   Mix of forest types
+    255 Not applicable (tree cover < 1%, i.e. not forest)
+
+Still TODO:
+- whether a 2020/2021 edition exists, or only up to ~2019 (if only 2019, that is
+  used as "pre-fire", since forest type changes far more slowly than height or
+  biomass, so one map for the whole 2020-2021 fire window should be fine)
+- whether to drop or keep class 0 ("Unknown") and 5 ("Mix") when grouping fires
+  by forest type, since neither maps cleanly onto the Fire Atlas's own categories
 """
 
 import ee
 
 COLLECTION = "COPERNICUS/Landcover/100m/Proba-V-C3/Global"
-BAND = "forest_type"   # TODO: confirm exact band name against the EE catalog
+BAND = "forest_type"
+
+FOREST_TYPE_LABELS = {
+    0: "unknown",
+    1: "evergreen_needleleaf",
+    2: "evergreen_broadleaf",
+    3: "deciduous_needleleaf",
+    4: "deciduous_broadleaf",
+    5: "mixed",
+    255: "not_forest",
+}
 
 
 def get_forest_type_image(year=2019):

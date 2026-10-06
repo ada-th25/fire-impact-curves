@@ -176,6 +176,7 @@ No confirmed cause for the pilot's low magnitude yet. Candidates considered: the
 - Earth Engine use requires the actual project ID (`tree-fire-510209`), not the display name, plus the project registered for Earth Engine access and the caller's account holding `roles/serviceusage.serviceUsageConsumer`.
 - All static layers were downloaded directly to the instance's disk under `data/`, which is gitignored.
 - A GCS bucket, `gs://tree-fire-510209-data`, in `europe-west2`, backs up `data/` and receives Earth Engine export outputs (such as dNBR) under `fire-impact-curves/data/...`, matching the local layout.
+- As of the `src/` pipeline (see "Reproducibility"), biomass and forest type are pulled from Earth Engine directly rather than downloaded per tile, so any fire globally works for those two without manual downloads. Height still needs a GLAD continental mosaic looked up by location (`src/height.py`), and only North America is confirmed so far, a fire elsewhere will raise until its mosaic is added.
 
 ## Reproducibility
 
@@ -205,7 +206,17 @@ for yr in 2019 2021 2022; do for kind in AGB AGB_SD; do
 done; done
 ```
 
-Downloaded on 2 Oct 2026. Fire selection and exploratory/diagnostic work stay in `notebooks/`. The per-fire alignment steps (height, biomass, dNBR) have been refactored into reusable functions in `src/` (`fires.py`, `grids.py`, `severity.py`, `pipeline.py`), callable as `build_cell_table(uid, ...)` for one fire at a time, see the "Refactored pipeline" section near the end of `notebooks/data.ipynb`. Still needed before running this over the full Section 5 sample: a forest-type layer, and a lookup for the right CCI AGB tile and GLAD height mosaic per fire's location (currently hardcoded to the pilot's tile).
+Downloaded on 2 Oct 2026, superseded for biomass by the Earth Engine source below. Fire selection and exploratory/diagnostic work stay in `notebooks/`. The per-fire alignment steps have been refactored into reusable functions in `src/`, callable as `build_cell_table(uid, ...)` for one fire at a time:
+
+- `fires.py`: look up a fire's geometry and attributes by uid.
+- `grids.py`: generic windowed-read and reproject-to-grid helpers.
+- `biomass.py`: above-ground biomass (ESA CCI Biomass v6.0, Earth Engine asset `ESA/CCI/Above_Ground_Biomass/V6_0`, band `agb`), any fire globally, no tile download needed.
+- `severity.py`: dNBR from Sentinel-2 via Earth Engine.
+- `forest_type.py`: forest type (CGLS-LC100, Earth Engine asset `COPERNICUS/Landcover/100m/Proba-V-C3/Global`, band `forest_type`), any fire globally, legend confirmed in that module's docstring.
+- `height.py`: canopy height (GLAD), still needs the right continental mosaic looked up by the fire's location, only North America is confirmed so far.
+- `pipeline.py`: `build_cell_table(uid, ...)`, ties the above together for one fire.
+
+See the pipeline cells near the end of `notebooks/data.ipynb` for example calls across the four fires run so far (Sections 9 and 10). Still needed before running this over the full Section 5 sample: GLAD height mosaics for continents other than North America, and resolving the steep-terrain height reliability issue (known issue #8).
 
 ## References
 

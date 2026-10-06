@@ -5,13 +5,19 @@ This is the refactored version of the manual steps in notebooks/data.ipynb
 (cells under "Fire severity (dNBR) for the pilot fire" onward). Run it once per
 fire in the stratified sample, then concatenate the results.
 
+Biomass now comes from Earth Engine (ESA/CCI/Above_Ground_Biomass/V6_0), not manually
+downloaded tiles, so there is no tile-boundary problem for AGB any more. Height still
+uses a continental GLAD mosaic looked up by the fire's location (src/height.py), only
+North America is confirmed so far, see that module's docstring.
+
 Still TODO, not solved by this module yet (see README "Known issues"):
-- Picking the right CCI AGB tile(s) and GLAD height mosaic for a fire outside the
-  pilot's N40W130 / NAM tile. A fire near a tile boundary may need two tiles.
+- height.py's CONTINENT_MOSAICS only has NAM confirmed; a fire outside North America
+  will raise until the right mosaic URL is added there.
 - The dNBR < 0.1 edge-regrowth exclusion (README Section 9) was tuned on one fire
   in one biome; it may need revisiting per biome once more fires are run.
 - GLAD height looks unreliable on steep terrain (README "Known issues" #8); height
   is included here but should not be trusted for curves yet.
+- biomass.py's band name ("AGB") is unverified, confirm before trusting results.
 """
 
 import os
@@ -20,9 +26,11 @@ import numpy as np
 import pandas as pd
 from rasterio.warp import Resampling
 
+from .biomass import download_agb
 from .fires import inner_burn_area, load_fire
 from .forest_type import download_forest_type
 from .grids import pad_bounds, read_window, reproject_to_grid
+from .height import height_mosaic_for
 from .severity import build_dnbr, download_dnbr, export_dnbr
 
 DNBR_DROP_BELOW = 0.1   # see README Section 9
@@ -32,28 +40,34 @@ SEVERITY_LABELS = ["mild", "moderate", "severe"]
 
 def build_cell_table(
     uid,
-    agb_paths,            # dict: {year: path_to_cci_agb_tif}
-    height_path,          # path to the GLAD height mosaic covering this fire
     utm_epsg,             # fire's local UTM zone, for the inner-burn buffer
     pre_fire_window,      # (start, end) strings, season before the fire started
     post_fire_window,     # (start, end) strings, same season one year later
     agb_before_year,
     agb_after_years,      # list of years to compute loss against, e.g. [2021, 2022]
+    height_path=None,     # override the auto-looked-up GLAD mosaic if needed
     pad=0.15,
     min_agb_before=10,
     forest_type_year=2019,
 ):
-    """Returns a per-cell DataFrame for one fire: dnbr, severity, height, and
-    biomass loss against each year in `agb_after_years`. Earth Engine must already
+    """Returns a per-cell DataFrame for one fire: dnbr, severity, height, forest_type,
+    and biomass loss against each year in `agb_after_years`. Earth Engine must already
     be initialised (ee.Authenticate() + ee.Initialize(project=...)) before calling.
+
+    Biomass and forest type are fetched from Earth Engine directly (any fire,
+    anywhere); height still needs a continental mosaic looked up by location
+    (src/height.py), and raises if that fire's continent isn't configured yet.
     """
     fire = load_fire(uid)
     bounds = pad_bounds(fire.total_bounds, pad)
     inner = inner_burn_area(fire, utm_epsg=utm_epsg)
+    aoi_ee = _ee_rectangle(bounds)
 
     agb, tr_ref, crs_ref, shape = {}, None, None, None
-    for yr, path in agb_paths.items():
-        agb[yr], tr_ref, crs_ref = read_window(path, bounds)
+    agb_years = sorted(set([agb_before_year, *agb_after_years]))
+    for yr in agb_years:
+        agb_path = download_agb(aoi_ee, uid, yr)
+        agb[yr], tr_ref, crs_ref = read_window(agb_path, bounds)
         shape = agb[yr].shape
 
     from rasterio.features import rasterize
@@ -67,13 +81,15 @@ def build_cell_table(
         valid &= np.isfinite(agb[yr])
     keep = mask_inner & valid
 
+    if height_path is None:
+        lon, lat = fire.geometry.iloc[0].centroid.x, fire.geometry.iloc[0].centroid.y
+        height_path = height_mosaic_for(lon, lat)
     height_arr, tr_h, crs_h = read_window(height_path, bounds, masked=False)
     height_100m = reproject_to_grid(
         height_arr.astype("float32"), tr_h, crs_h, shape, tr_ref, crs_ref,
         resampling=Resampling.average,
     )
 
-    aoi_ee = _ee_rectangle(bounds)
     dnbr_path = f"../data/severity/dnbr_{uid}.tif"
     if not os.path.exists(dnbr_path):
         dnbr_image = build_dnbr(aoi_ee, *pre_fire_window, *post_fire_window)

@@ -99,6 +99,7 @@ Selected because it is large (1,206 km2), starts in August 2020 (clean pre-fire 
 5. **Height saturation**: GLAD heights saturate above about 30 m; the 95th percentile in the pilot box is 34 m.
 6. **Definition of "forest"**: MODIS land cover as used in the Atlas; may differ from dense forest in biomass terms.
 7. **Prescribed or agricultural burns**: some candidate fires (for example in the southeastern US in spring) may not be wildfires. Decide whether to include them.
+8. **GLAD height looks unreliable on steep terrain, height-class results are not ready.** In the four-fire batch (Section 10), fire `2020_135` (steep Sierra Nevada terrain) has implausible height/biomass combinations in about 31% of its cells classed as under 10 m tall, pre-fire biomass up to almost 400 Mg/ha, which genuinely short stands do not carry. This is probably GLAD's GEDI/Landsat height model being less reliable on steep slopes, not a pipeline bug, but it is not confirmed against a terrain layer. Do not treat any height-class breakdown (loss by height x severity) as usable until this is resolved, it currently makes the height axis unreliable for at least some fires. Needs either a terrain/slope-based filter or a sanity check such as dropping height/biomass combinations outside a plausible range before grouping by height class.
 
 ## 8. Pilot result: CCI biomass sensitivity to fire loss
 

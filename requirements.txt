@@ -1,0 +1,5 @@
+earthengine-api==1.7.46
+geemap==0.38.9
+geopandas==1.2.0
+pandas==3.0.6
+pyarrow==25.0.1

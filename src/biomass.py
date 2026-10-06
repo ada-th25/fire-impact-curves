@@ -8,14 +8,15 @@ Earth Engine ImageCollection, one image per year, so a fire's AOI is just clippe
 out of it directly, same pattern as severity.py and forest_type.py.
 
 Confirmed asset id: ESA/CCI/Above_Ground_Biomass/V6_0 (official EE catalog).
-Band name assumed "AGB" (not yet verified against the catalog, check
-img.bandNames().getInfo() before trusting this for anything beyond the pilot).
+Band name confirmed as "agb" (lowercase; the collection also has "agb_sd" for the
+per-pixel standard deviation), from the error EE itself returns when a wrong band
+name is requested: "Available bands: [agb, agb_sd]".
 """
 
 import ee
 
 COLLECTION = "ESA/CCI/Above_Ground_Biomass/V6_0"
-BAND = "AGB"   # TODO: confirm exact band name against the EE catalog
+BAND = "agb"
 
 
 def get_agb_image(year):

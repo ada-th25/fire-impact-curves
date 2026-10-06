@@ -17,7 +17,6 @@ Still TODO, not solved by this module yet (see README "Known issues"):
   in one biome; it may need revisiting per biome once more fires are run.
 - GLAD height looks unreliable on steep terrain (README "Known issues" #8); height
   is included here but should not be trusted for curves yet.
-- biomass.py's band name ("AGB") is unverified, confirm before trusting results.
 """
 
 import os

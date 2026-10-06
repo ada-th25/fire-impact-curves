@@ -132,10 +132,32 @@ Subtracting this baseline trend from the 2021 figures gives a fire-attributable 
 
 **Conclusion.** CCI annual biomass at 100 m does register fire-driven canopy loss in the correct direction, but its magnitude is far below what full carbon loss from a stand-replacing fire should look like. Likely causes include standing dead trees still counted as woody biomass, and the annual product being too coarse or too smoothed to register abrupt loss. This is a one-fire result and not conclusive on its own, but it is a serious caution against using CCI annual biomass change as the sole outcome variable for the impact curves, and should be tested on more fires and forest types before the main sample is built.
 
+## 9. Pilot result: loss against fire severity (dNBR)
+
+The Tyukavina layer is now used only as a cross-check, not as part of the modelling pipeline. The core relationship to establish is loss against pre-fire canopy height, forest type and fire severity, so this step replaces the Tyukavina flag share with dNBR as the severity axis.
+
+dNBR was computed from Sentinel-2 (via Earth Engine) as the difference between a cloud-filtered median NBR composite from the season before the fire (July 2020) and the same season one year later (July-August 2021), following the roadmap's guidance to compare like seasons. It was then averaged onto the 100 m CCI biomass grid.
+
+Cells with dNBR below 0.1 are excluded from the severity scale (see below), then the rest are binned into the roadmap's rough severity classes:
+
+| Severity (dNBR) | Cells | CCI biomass loss by 2021 | CCI biomass loss by 2022 |
+|---|---|---|---|
+| mild (0.1 to 0.27) | 22,214 | 1.0% | 5.1% |
+| moderate (0.27 to 0.66) | 60,292 | 2.8% | 4.5% |
+| severe (> 0.66) | 23,956 | 6.8% | 11.6% |
+
+A finer 0.05-step binning across this range shows a broadly monotonic rise in loss with severity, from about 1 to 9% in the mild to moderate range up to about 24% by 2022 at the most severe end, with a small bump and dip around dNBR 0.4 to 0.6 that is most likely genuine heterogeneity within this one large, complex fire rather than noise (the bins there hold tens of thousands of cells each). This is the first result in the project that shows the shape the roadmap is after, loss increasing with fire severity, though the magnitude at the severe end is still well below the roadmap's illustrative 60 to 90%, consistent with the CCI sensitivity finding in Section 8.
+
+**Cells with dNBR below 0.1 are not usable as a severity measurement and are dropped.** Loss in this range is elevated and not monotonic with the rest of the curve, which is the wrong direction for low severity (a dNBR near or below 0 means the post-fire image looked as healthy as, or healthier than, the pre-fire one). Mapping these cells shows them scattered broadly across the whole burn scar rather than confined to a thin band at the perimeter, which points to patches of already-sparse vegetation, water, rock or riparian understory that regrow quickly regardless of where they sit, rather than a processing error such as cloud or smoke contamination. These cells are dropped from the fitted curve rather than treated as "unburnt" or "very low severity".
+
+**Conclusion.** Loss and fire severity are now linked for the pilot fire, with a believable, broadly monotonic relationship from mild to severe dNBR, once cells below dNBR 0.1 are excluded. As with Section 8, this is a one-fire, one-forest-type result, and the next step is repeating this across fires that span more height classes and forest types, which the pipeline in `src/` is now set up to do (see "Reproducibility").
+
 ## Infrastructure
 
-- GCP project `tree-fire` (created by supervisor); Vertex AI Workbench instance `tree-fire-workbench`; Python venv `.venv` with earthengine-api, geemap, pandas, geopandas, pyarrow, ipykernel, rasterio, pyogrio.
+- GCP project `tree-fire` (display name), project ID `tree-fire-510209`; Vertex AI Workbench instance `tree-fire-workbench`, zone `europe-west2-a`; Python venv `.venv` with earthengine-api, geemap, pandas, geopandas, pyarrow, ipykernel, rasterio, pyogrio.
+- Earth Engine use requires the actual project ID (`tree-fire-510209`), not the display name, plus the project registered for Earth Engine access and the caller's account holding `roles/serviceusage.serviceUsageConsumer`.
 - All static layers were downloaded directly to the instance's disk under `data/`, which is gitignored.
+- A GCS bucket, `gs://tree-fire-510209-data`, in `europe-west2`, backs up `data/` and receives Earth Engine export outputs (such as dNBR) under `fire-impact-curves/data/...`, matching the local layout.
 
 ## Reproducibility
 
@@ -165,7 +187,7 @@ for yr in 2019 2021 2022; do for kind in AGB AGB_SD; do
 done; done
 ```
 
-Downloaded on 2 Oct 2026. The fire filtering and pilot analysis are in `notebooks/` (exploratory). They should be moved into `src/` as scripts before the sample is scaled up.
+Downloaded on 2 Oct 2026. Fire selection and exploratory/diagnostic work stay in `notebooks/`. The per-fire alignment steps (height, biomass, dNBR) have been refactored into reusable functions in `src/` (`fires.py`, `grids.py`, `severity.py`, `pipeline.py`), callable as `build_cell_table(uid, ...)` for one fire at a time, see the "Refactored pipeline" section near the end of `notebooks/data.ipynb`. Still needed before running this over the full Section 5 sample: a forest-type layer, and a lookup for the right CCI AGB tile and GLAD height mosaic per fire's location (currently hardcoded to the pilot's tile).
 
 ## References
 

@@ -5,17 +5,23 @@ so every fire can reuse the same alignment logic instead of copy-pasting it.
 
 import numpy as np
 import rasterio
-from rasterio.warp import Resampling, reproject
+from rasterio.warp import Resampling, reproject, transform_bounds
 from rasterio.windows import from_bounds
 
 
-def read_window(path, bounds, masked=True):
-    """Read the sub-array of `path` covering `bounds` (w, s, e, n in the raster's CRS).
+def read_window(path, bounds, masked=True, bounds_crs="EPSG:4326"):
+    """Read the sub-array of `path` covering `bounds` (w, s, e, n, in `bounds_crs`,
+    EPSG:4326/lon-lat by default, which is what every bounds tuple in this project
+    is computed in). `bounds` is reprojected into the raster's own CRS first, so
+    this works regardless of what CRS the file itself happens to be in (the CCI/GLAD/
+    dNBR files are all EPSG:4326, but an Earth Engine export, e.g. forest_type, can
+    come back in something else, like EPSG:3857 - using the lon/lat bounds directly
+    against such a file's transform silently produces an empty, ~0x0 window).
 
     Returns (array, transform, crs) for just that window, rounded to whole pixels.
     """
-    w, s, e, n = bounds
     with rasterio.open(path) as src:
+        w, s, e, n = transform_bounds(bounds_crs, src.crs, *bounds)
         win = from_bounds(w, s, e, n, src.transform).round_offsets().round_lengths()
         arr = src.read(1, window=win, masked=masked)
         if masked:

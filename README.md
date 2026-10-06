@@ -150,7 +150,24 @@ A finer 0.05-step binning across this range shows a broadly monotonic rise in lo
 
 **Cells with dNBR below 0.1 are not usable as a severity measurement and are dropped.** Loss in this range is elevated and not monotonic with the rest of the curve, which is the wrong direction for low severity (a dNBR near or below 0 means the post-fire image looked as healthy as, or healthier than, the pre-fire one). Mapping these cells shows them scattered broadly across the whole burn scar rather than confined to a thin band at the perimeter, which points to patches of already-sparse vegetation, water, rock or riparian understory that regrow quickly regardless of where they sit, rather than a processing error such as cloud or smoke contamination. These cells are dropped from the fitted curve rather than treated as "unburnt" or "very low severity".
 
-**Conclusion.** Loss and fire severity are now linked for the pilot fire, with a believable, broadly monotonic relationship from mild to severe dNBR, once cells below dNBR 0.1 are excluded. As with Section 8, this is a one-fire, one-forest-type result, and the next step is repeating this across fires that span more height classes and forest types, which the pipeline in `src/` is now set up to do (see "Reproducibility").
+**Conclusion.** Loss and fire severity are now linked for the pilot fire, with a believable, broadly monotonic relationship from mild to severe dNBR, once cells below dNBR 0.1 are excluded. As with Section 8, this is a one-fire, one-forest-type result, and the next step is repeating this across fires that span more height classes and forest types, which the pipeline in `src/` is now set up to do (see "Reproducibility"). **This step's result turned out not to generalise, see Section 10.**
+
+## 10. Three more fires: the pilot's low magnitude does not generalise
+
+The pipeline in `src/` (Section 9's "next step") was run on three more fires in the pilot's CCI tile, one more Evergreen Needleleaf fire (`2020_135`), one Evergreen Needleleaf fire from 2021 (`2021_190`), and one small Evergreen Broadleaf fire (`2020_464`, only 64 cells total, too small to trust on its own but included as a pipeline stress test). CCI biomass loss by the final available year, by severity class:
+
+| Fire | Forest type | mild | moderate | severe |
+|---|---|---|---|---|
+| 2020_112 (pilot) | Evergreen Needleleaf | 5.1% | 4.5% | 11.6% |
+| 2020_135 | Evergreen Needleleaf | 17.3% | 23.8% | 26.7% |
+| 2021_190 | Evergreen Needleleaf | 11.2% | 36.5% | 54.3% |
+| 2020_464 | Evergreen Broadleaf | 21.7% | 51.7% | 52.3% |
+
+All three new fires show a monotonic rise in loss with severity, and three of the four fires reach magnitudes much closer to the roadmap's illustrative 60 to 90% than the pilot did, `2021_190` reaches 54.3% at severe. **The pilot fire now looks like the outlier, not the typical case.** The cautious conclusions in Sections 8 and 9, that CCI annual biomass barely registers fire loss, were drawn from the pilot alone and do not hold up once more fires are added. CCI biomass can apparently register a much larger loss than the pilot showed, this looks like a property of that one fire rather than of the CCI product in general.
+
+No confirmed cause for the pilot's low magnitude yet. Candidates considered: the pilot is the largest and most structurally complex of the four fires, which could mean a patchier internal mix of severities; residual smoke or haze in its pre-fire Sentinel-2 composite (weakened as an explanation since `2020_135`, also a 2020 Northern California fire with an overlapping pre-fire window, did not show the same dampening); or a genuine ecological difference in stand density, drought stress or terrain between fires nominally in the same forest type. This has not been investigated further, in favour of continuing to build out the multi-fire sample, since fire-to-fire variation of this kind is exactly what Section 6 of the roadmap expects the curves' uncertainty (computed by fire, not by pixel) to capture.
+
+**Conclusion.** Do not treat Sections 8 and 9's magnitude findings as settled. CCI biomass's sensitivity to fire loss appears to vary a great deal by fire, for reasons not yet understood, and a larger sample across forest types and biomes is needed before concluding anything about typical magnitude.
 
 ## Infrastructure
 

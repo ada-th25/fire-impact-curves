@@ -14,6 +14,8 @@ Still TODO, not solved by this module yet (see README "Known issues"):
   is included here but should not be trusted for curves yet.
 """
 
+import os
+
 import numpy as np
 import pandas as pd
 from rasterio.warp import Resampling
@@ -72,10 +74,14 @@ def build_cell_table(
     )
 
     aoi_ee = _ee_rectangle(bounds)
-    dnbr_image = build_dnbr(aoi_ee, *pre_fire_window, *post_fire_window)
-    task = export_dnbr(dnbr_image, uid, aoi_ee)
-    _wait_for_task(task)
-    dnbr_path = download_dnbr(uid)
+    dnbr_path = f"../data/severity/dnbr_{uid}.tif"
+    if not os.path.exists(dnbr_path):
+        dnbr_image = build_dnbr(aoi_ee, *pre_fire_window, *post_fire_window)
+        task = export_dnbr(dnbr_image, uid, aoi_ee)
+        _wait_for_task(task)
+        dnbr_path = download_dnbr(uid)
+    else:
+        print(f"reusing cached dNBR for {uid}: {dnbr_path}")
 
     dnbr_arr, tr_d, crs_d = read_window(dnbr_path, bounds)
     dnbr_100m = reproject_to_grid(

@@ -203,7 +203,7 @@ On the instance:
 ```bash
 # environment
 python -m venv .venv && source .venv/bin/activate
-pip install earthengine-api geemap pandas geopandas pyarrow ipykernel pyogrio rasterio
+pip install earthengine-api geemap pandas geopandas pyarrow ipykernel pyogrio rasterio scipy
 
 # 1. fire list (Global Fire Atlas v20240409, Zenodo 11400062)
 mkdir -p data/fire_atlas && cd data/fire_atlas

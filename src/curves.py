@@ -36,18 +36,25 @@ def fit_group(df, dnbr_col="dnbr", loss_col="loss2022", min_fires=3, min_cells=2
 
     x = df[dnbr_col].to_numpy()
     y = df[loss_col].to_numpy()
+    k_upper_bound = 50
     try:
         popt, pcov = curve_fit(
             logistic, x, y,
             p0=[0.5, 5, 0.4],             # rough starting guess: l_max=0.5, midpoint dNBR=0.4
-            bounds=([0, 0, -1], [1, 50, 2]),
+            bounds=([0, 0, -1], [1, k_upper_bound, 2]),
             maxfev=5000,
         )
     except RuntimeError as e:
         return {"status": "fit_failed", "error": str(e), "n_fires": n_fires, "n_cells": len(df)}
 
+    # k pegged against its upper bound means curve_fit found an (almost) step function,
+    # not a real smooth logistic - the data didn't constrain steepness. Flag rather than
+    # report alongside genuine fits; seen so far concentrated in the <10m height class,
+    # consistent with the known GLAD-height-on-steep-terrain issue (README #8).
+    degenerate = popt[1] >= k_upper_bound * 0.999
+
     return {
-        "status": "fitted",
+        "status": "degenerate_fit" if degenerate else "fitted",
         "l_max": popt[0], "k": popt[1], "x0": popt[2],
         "param_std_err": np.sqrt(np.diag(pcov)).tolist(),
         "n_fires": n_fires, "n_cells": len(df),
@@ -67,9 +74,16 @@ def per_fire_severity_means(df, severity_col="severity", loss_col="loss2022"):
 
 
 def fit_all_groups(all_cells, height_col="height_class", forest_type_col="forest_type_label",
-                    dnbr_col="dnbr", loss_col="loss2022"):
-    """Fit (or report insufficient data for) every height x forest-type group present."""
+                    dnbr_col="dnbr", loss_col="loss2022",
+                    exclude_forest_types=("unknown", "not_forest")):
+    """Fit (or report insufficient data for) every height x forest-type group present.
+
+    `unknown` ("tree cover present but CGLS-LC100 couldn't classify the type") and
+    `not_forest` are excluded by default, fitting a curve to "unclassified forest"
+    is meaningless, not a real group to report.
+    """
     results = {}
-    for (h, ft), grp in all_cells.groupby([height_col, forest_type_col], observed=True):
+    usable = all_cells[~all_cells[forest_type_col].isin(exclude_forest_types)]
+    for (h, ft), grp in usable.groupby([height_col, forest_type_col], observed=True):
         results[(h, ft)] = fit_group(grp, dnbr_col=dnbr_col, loss_col=loss_col)
     return pd.DataFrame(results).T

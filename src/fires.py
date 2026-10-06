@@ -24,6 +24,14 @@ def load_fire(uid):
     return fire
 
 
+def utm_epsg_for(lon, lat):
+    """UTM zone EPSG code for a point, e.g. for `inner_burn_area`'s buffer distance
+    to be in real metres. Standard 6-degree UTM zones; not valid above ~84N/80S.
+    """
+    zone = int((lon + 180) // 6) + 1
+    return (32600 if lat >= 0 else 32700) + zone
+
+
 def inner_burn_area(fire, buffer_m=-500, utm_epsg=None):
     """Fire perimeter minus its outer `buffer_m` (negative = shrink), in UTM so the
     buffer distance is in metres. `utm_epsg` must be supplied per fire (it depends on

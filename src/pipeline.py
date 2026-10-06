@@ -8,9 +8,11 @@ fire in the stratified sample, then concatenate the results.
 Still TODO, not solved by this module yet (see README "Known issues"):
 - Picking the right CCI AGB tile(s) and GLAD height mosaic for a fire outside the
   pilot's N40W130 / NAM tile. A fire near a tile boundary may need two tiles.
-- A forest-type layer (conifer/broadleaf/plantation) is not wired in at all yet.
 - The dNBR < 0.1 edge-regrowth exclusion (README Section 9) was tuned on one fire
   in one biome; it may need revisiting per biome once more fires are run.
+- GLAD height looks unreliable on steep terrain (README "Known issues" #8); height
+  is included here but should not be trusted for curves yet.
+- forest_type.py's exact band name/value legend against CGLS-LC100 is unverified.
 """
 
 import numpy as np
@@ -18,6 +20,7 @@ import pandas as pd
 from rasterio.warp import Resampling
 
 from .fires import inner_burn_area, load_fire
+from .forest_type import download_forest_type
 from .grids import pad_bounds, read_window, reproject_to_grid
 from .severity import build_dnbr, download_dnbr, export_dnbr
 
@@ -37,6 +40,7 @@ def build_cell_table(
     agb_after_years,      # list of years to compute loss against, e.g. [2021, 2022]
     pad=0.15,
     min_agb_before=10,
+    forest_type_year=2019,
 ):
     """Returns a per-cell DataFrame for one fire: dnbr, severity, height, and
     biomass loss against each year in `agb_after_years`. Earth Engine must already
@@ -80,7 +84,16 @@ def build_cell_table(
         resampling=Resampling.average, nodata_below=-100,
     )
 
-    data = {"uid": uid, "height": height_100m[keep], "dnbr": dnbr_100m[keep]}
+    ft_path = download_forest_type(aoi_ee, uid, year=forest_type_year)
+    ft_arr, tr_ft, crs_ft = read_window(ft_path, bounds, masked=False)
+    # nearest, not average: forest type is categorical, a mean of class codes is meaningless
+    forest_type_100m = reproject_to_grid(
+        ft_arr.astype("float32"), tr_ft, crs_ft, shape, tr_ref, crs_ref,
+        resampling=Resampling.nearest,
+    )
+
+    data = {"uid": uid, "height": height_100m[keep], "dnbr": dnbr_100m[keep],
+            "forest_type": forest_type_100m[keep]}
     data[f"a{agb_before_year}"] = agb[agb_before_year][keep]
     for yr in agb_after_years:
         data[f"a{yr}"] = agb[yr][keep]

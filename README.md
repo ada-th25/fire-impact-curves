@@ -100,6 +100,38 @@ Selected because it is large (1,206 km2), starts in August 2020 (clean pre-fire 
 6. **Definition of "forest"**: MODIS land cover as used in the Atlas; may differ from dense forest in biomass terms.
 7. **Prescribed or agricultural burns**: some candidate fires (for example in the southeastern US in spring) may not be wildfires. Decide whether to include them.
 
+## 8. Pilot result: CCI biomass sensitivity to fire loss
+
+Using the Tyukavina fire-loss layer only as a check (not as part of the modelling pipeline), cells in the pilot fire were grouped by the share of the 100 m cell flagged as fire-driven tree loss in 2020 or 2021.
+
+| Share of cell flagged as fire loss | Cells | CCI biomass loss by 2021 | CCI biomass loss by 2022 |
+|---|---|---|---|
+| 0 to 5% | 24,760 | 0.5% | 4.4% |
+| 5 to 25% | 9,957 | 1.9% | 3.8% |
+| 25 to 50% | 10,083 | 2.8% | 5.1% |
+| 50 to 75% | 11,440 | 3.2% | 4.5% |
+| 75 to 95% | 15,090 | 4.0% | 6.6% |
+| 95 to 100% | 40,191 | 6.5% | 10.5% |
+
+The loss rises steadily with the flagged share, so the two datasets agree on where the fire hit. The size of the response is small though. Cells almost entirely flagged as fire loss lose only 6.5% of CCI biomass by 2021 and 10.5% by 2022, well short of the 60 to 90% the roadmap's illustrative table assumed for severe fire.
+
+**Placebo check.** The same grouping was applied to 2018 to 2019 biomass change, a period with no fire, using the 2018 AGB tile for N40W130.
+
+| Share of cell flagged as fire loss | "Loss" 2018 to 2019 (no fire) | Mean 2019 biomass (Mg/ha) |
+|---|---|---|
+| 0 to 5% | -3.5% (gain) | 93.5 |
+| 5 to 25% | -2.4% (gain) | 93.9 |
+| 25 to 50% | -2.2% (gain) | 92.5 |
+| 50 to 75% | -1.6% (gain) | 90.4 |
+| 75 to 95% | -1.5% (gain) | 88.1 |
+| 95 to 100% | -0.4% (gain) | 86.1 |
+
+Every group gains biomass between 2018 and 2019, as expected with no fire, but the gain is not even across groups. Cells that would later be heavily fire-flagged already show less pre-fire gain and a lower starting biomass than lightly-flagged cells. This points to a pre-existing difference between the groups (likely in forest composition or site conditions), not a flaw in the fire flagging.
+
+Subtracting this baseline trend from the 2021 figures gives a fire-attributable signal of about 4.0% (lightly flagged cells) rising to 6.9% (fully flagged cells). The fire effect is real and monotonic, but still small, on the order of single-digit percentage points, not tens of percent.
+
+**Conclusion.** CCI annual biomass at 100 m does register fire-driven canopy loss in the correct direction, but its magnitude is far below what full carbon loss from a stand-replacing fire should look like. Likely causes include standing dead trees still counted as woody biomass, and the annual product being too coarse or too smoothed to register abrupt loss. This is a one-fire result and not conclusive on its own, but it is a serious caution against using CCI annual biomass change as the sole outcome variable for the impact curves, and should be tested on more fires and forest types before the main sample is built.
+
 ## Infrastructure
 
 - GCP project `tree-fire` (created by supervisor); Vertex AI Workbench instance `tree-fire-workbench`; Python venv `.venv` with earthengine-api, geemap, pandas, geopandas, pyarrow, ipykernel, rasterio, pyogrio.

@@ -73,6 +73,41 @@ def per_fire_severity_means(df, severity_col="severity", loss_col="loss2022"):
     )
 
 
+def bootstrap_curve_band(df, dnbr_col="dnbr", loss_col="loss2022",
+                          x_grid=None, n_boot=500, pct=(10, 90), random_state=0):
+    """By-fire bootstrap: resample fires (with replacement), not pixels, refit the
+    logistic on each resample, and return a percentile band of *predicted loss*
+    across the resamples at each point in `x_grid` (more stable to report than a
+    band on l_max/k/x0 individually, since those three can trade off against each
+    other for similar-looking curves).
+
+    Returns None if there are too few fires to bootstrap meaningfully (<3, same
+    floor as fit_group's default min_fires).
+    """
+    rng = np.random.default_rng(random_state)
+    uids = df["uid"].unique()
+    if len(uids) < 3:
+        return None
+    if x_grid is None:
+        x_grid = np.linspace(0.1, 1.0, 19)
+
+    preds = []
+    for _ in range(n_boot):
+        sample_uids = rng.choice(uids, size=len(uids), replace=True)
+        sample = pd.concat([df[df["uid"] == u] for u in sample_uids], ignore_index=True)
+        fit = fit_group(sample, dnbr_col=dnbr_col, loss_col=loss_col, min_fires=1, min_cells=1)
+        if fit["status"] not in ("fitted", "degenerate_fit"):
+            continue
+        preds.append(logistic(x_grid, fit["l_max"], fit["k"], fit["x0"]))
+
+    if len(preds) < n_boot * 0.5:   # too many failed fits to trust the band
+        return None
+    preds = np.array(preds)
+    lo, hi = np.percentile(preds, pct, axis=0)
+    return pd.DataFrame({"dnbr": x_grid, f"p{pct[0]}": lo, f"p{pct[1]}": hi,
+                          "median": np.percentile(preds, 50, axis=0)})
+
+
 def fit_all_groups(all_cells, height_col="height_class", forest_type_col="forest_type_label",
                     dnbr_col="dnbr", loss_col="loss2022",
                     exclude_forest_types=("unknown", "not_forest")):

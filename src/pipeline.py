@@ -27,7 +27,7 @@ from rasterio.warp import Resampling
 
 from .biomass import download_agb
 from .fires import inner_burn_area, load_fire
-from .forest_type import download_forest_type
+from .forest_type import download_discrete, download_forest_type, resolve_label
 from .grids import pad_bounds, read_window, reproject_to_grid
 from .height import height_mosaic_for
 from .severity import build_dnbr, download_dnbr, export_dnbr
@@ -112,8 +112,16 @@ def build_cell_table(
         resampling=Resampling.nearest,
     )
 
+    discrete_path = download_discrete(aoi_ee, uid, year=forest_type_year)
+    discrete_arr, tr_disc, crs_disc = read_window(discrete_path, bounds, masked=False)
+    discrete_100m = reproject_to_grid(
+        discrete_arr.astype("float32"), tr_disc, crs_disc, shape, tr_ref, crs_ref,
+        resampling=Resampling.nearest,
+    )
+
     data = {"uid": uid, "height": height_100m[keep], "dnbr": dnbr_100m[keep],
-            "forest_type": forest_type_100m[keep]}
+            "forest_type": forest_type_100m[keep],
+            "forest_type_label": resolve_label(forest_type_100m[keep], discrete_100m[keep])}
     data[f"a{agb_before_year}"] = agb[agb_before_year][keep]
     for yr in agb_after_years:
         data[f"a{yr}"] = agb[yr][keep]

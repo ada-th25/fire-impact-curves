@@ -37,26 +37,38 @@ def fit_group(df, dnbr_col="dnbr", loss_col="loss2022", min_fires=3, min_cells=2
     x = df[dnbr_col].to_numpy()
     y = df[loss_col].to_numpy()
     k_upper_bound = 50
+    l_max_upper_bound = 1
     try:
         popt, pcov = curve_fit(
             logistic, x, y,
             p0=[0.5, 5, 0.4],             # rough starting guess: l_max=0.5, midpoint dNBR=0.4
-            bounds=([0, 0, -1], [1, k_upper_bound, 2]),
+            bounds=([0, 0, -1], [l_max_upper_bound, k_upper_bound, 2]),
             maxfev=5000,
         )
     except RuntimeError as e:
         return {"status": "fit_failed", "error": str(e), "n_fires": n_fires, "n_cells": len(df)}
 
-    # k pegged against its upper bound means curve_fit found an (almost) step function,
-    # not a real smooth logistic - the data didn't constrain steepness. Flag rather than
-    # report alongside genuine fits; seen so far concentrated in the <10m height class,
-    # consistent with the known GLAD-height-on-steep-terrain issue (README #8).
-    degenerate = popt[1] >= k_upper_bound * 0.999
+    # Flag rather than report alongside genuine fits when any of:
+    # - k pegged against its bound: an (almost) step function, the data didn't
+    #   constrain steepness. Seen so far concentrated in <10m, consistent with the
+    #   known GLAD-height-on-steep-terrain issue (README #8).
+    # - l_max pegged against its bound: implies loss -> 100% as severity rises,
+    #   which a handful of cells from a few fires cannot actually support.
+    # - any parameter's std error exceeds its own plausible range: curve_fit found
+    #   *a* minimum but the fit is not actually constrained by the data (seen with
+    #   l_max std errors far bigger than 1, which is nonsensical for a 0-1 parameter).
+    param_std_err = np.sqrt(np.diag(pcov))
+    degenerate = (
+        popt[1] >= k_upper_bound * 0.999
+        or popt[0] >= l_max_upper_bound * 0.999
+        or param_std_err[0] > 1
+        or param_std_err[1] > k_upper_bound
+    )
 
     return {
         "status": "degenerate_fit" if degenerate else "fitted",
         "l_max": popt[0], "k": popt[1], "x0": popt[2],
-        "param_std_err": np.sqrt(np.diag(pcov)).tolist(),
+        "param_std_err": param_std_err.tolist(),
         "n_fires": n_fires, "n_cells": len(df),
     }
 

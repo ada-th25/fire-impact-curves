@@ -208,6 +208,18 @@ Three more fires were added (two more Evergreen Broadleaf, one Deciduous Broadle
 
 **Conclusion.** This is the first result close to the actual deliverable, a fitted curve with uncertainty computed by fire, as the roadmap specifies, not by pixel. It also confirms the band is still far too wide with only 4 fires per group. More fires per group are needed before any curve here is narrow enough to be useful, and the Atlas-label mismatch means fires cannot be pre-selected by forest type with confidence, composition has to be checked per fire after running the pipeline.
 
+## 13. Forest-type fallback, a degenerate-fit gap, and a dedicated runner notebook
+
+The recurring `unknown` forest-type share (flagged across Sections 11 and 12) is now addressed with a fallback: `src/forest_type.py` also reads CGLS-LC100's `discrete_classification` band (closed/open forest sub-type, legend confirmed against the product's documentation) and uses it wherever the primary `forest_type` band is `unknown` or `not_forest`. `build_cell_table` now returns the resolved label directly as `forest_type_label`.
+
+Rerunning all 11 fires through this: `unknown` dropped from 20.7% to 14.9% of all cells, a real but modest recovery. More tellingly, `Evergreen Broadleaf, 10-20m` went from drawing on 4 fires to 6, two fires that previously had too few classified cells to count now contribute, confirming the fallback changes which fires qualify for a group, not just overall accuracy.
+
+**A second degenerate-fit mode found.** `Evergreen Broadleaf, >20m` (5 fires, only 563 cells) fitted with `l_max = 1.0`, pegged exactly at its upper bound, and a parameter standard error of 31 on a parameter that can only range 0 to 1, nonsensical, the fit is not actually constrained by the data. The earlier degenerate check only looked at the steepness parameter `k` hitting its bound; it has been extended to also flag `l_max` pegging and implausibly large parameter standard errors. Same lesson as the `k`-pegging case: a "fitted" status alone is not enough to trust a curve, always check `status == "fitted"` specifically, not just that a result came back.
+
+**Batch runs now live in `notebooks/run_pipeline.ipynb`**, not `data.ipynb`. It defines every fire's config in one place, loops `build_cell_table`, saves the pooled table to `data/processed/all_cells.parquet`, and reports the forest-type recovery comparison. `data.ipynb` remains as the exploratory/diagnostic record of how the issues in Sections 8 to 13 were found.
+
+**Conclusion.** The forest-type fallback is a genuine, if modest, improvement, worth keeping. The new degenerate-fit case is a reminder that small-sample curve fits need active scrutiny, not just a status check, every group should be eyeballed before being trusted, not assumed safe because `curve_fit` didn't raise an exception.
+
 ## Infrastructure
 
 - GCP project `tree-fire` (display name), project ID `tree-fire-510209`; Vertex AI Workbench instance `tree-fire-workbench`, zone `europe-west2-a`; Python venv `.venv` with earthengine-api, geemap, pandas, geopandas, pyarrow, ipykernel, rasterio, pyogrio.

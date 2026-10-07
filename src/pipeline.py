@@ -59,13 +59,19 @@ def submit_dnbr_tasks(fire_configs, pad=0.15):
             print(f"reusing cached dNBR for {uid}: {dnbr_path}")
             submitted[uid] = {"task": None, "dnbr_path": dnbr_path}
             continue
-        fire = load_fire(uid)
-        bounds = pad_bounds(fire.total_bounds, pad)
-        aoi_ee = _ee_rectangle(bounds)
-        dnbr_image = build_dnbr(aoi_ee, *cfg["pre_fire_window"], *cfg["post_fire_window"])
-        task = export_dnbr(dnbr_image, uid, aoi_ee)
-        print(f"submitted dNBR export for {uid}")
-        submitted[uid] = {"task": task, "dnbr_path": None}
+        try:
+            fire = load_fire(uid)
+            bounds = pad_bounds(fire.total_bounds, pad)
+            aoi_ee = _ee_rectangle(bounds)
+            dnbr_image = build_dnbr(aoi_ee, *cfg["pre_fire_window"], *cfg["post_fire_window"])
+            task = export_dnbr(dnbr_image, uid, aoi_ee)
+            print(f"submitted dNBR export for {uid}")
+            submitted[uid] = {"task": task, "dnbr_path": None}
+        except Exception as e:
+            # one fire failing (e.g. an ambiguous uid, see fires.py) must not lose
+            # the Task handles for every other fire already submitted this run
+            print(f"{uid} FAILED to submit: {e}")
+            submitted[uid] = {"task": None, "dnbr_path": None, "error": str(e)}
     return submitted
 
 

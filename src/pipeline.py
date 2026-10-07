@@ -37,6 +37,63 @@ SEVERITY_BINS = [DNBR_DROP_BELOW, 0.27, 0.66, 2.0]
 SEVERITY_LABELS = ["mild", "moderate", "severe"]
 
 
+def submit_dnbr_tasks(fire_configs, pad=0.15):
+    """Phase 1 of a batch run: submit every fire's dNBR export to Earth Engine at
+    once, rather than one fire at a time inside build_cell_table. Earth Engine runs
+    each export independently on its own servers, so N fires submitted together
+    take roughly as long as 1, not N times as long - this is what makes running
+    "many fires" (per the roadmap/supervisor) practical instead of an all-day wait.
+
+    `fire_configs` is the same list of dicts passed to build_cell_table (must
+    include uid, pre_fire_window, post_fire_window). Returns a dict
+    {uid: {"task": Task or None, "dnbr_path": str or None}} - `task` is None and
+    `dnbr_path` is already set for any fire whose dNBR is already cached locally.
+    Pass this dict's per-uid entry to build_cell_table's `dnbr_path=` after calling
+    `wait_and_download_dnbr` on it.
+    """
+    submitted = {}
+    for cfg in fire_configs:
+        uid = cfg["uid"]
+        dnbr_path = f"../data/severity/dnbr_{uid}.tif"
+        if os.path.exists(dnbr_path):
+            print(f"reusing cached dNBR for {uid}: {dnbr_path}")
+            submitted[uid] = {"task": None, "dnbr_path": dnbr_path}
+            continue
+        fire = load_fire(uid)
+        bounds = pad_bounds(fire.total_bounds, pad)
+        aoi_ee = _ee_rectangle(bounds)
+        dnbr_image = build_dnbr(aoi_ee, *cfg["pre_fire_window"], *cfg["post_fire_window"])
+        task = export_dnbr(dnbr_image, uid, aoi_ee)
+        print(f"submitted dNBR export for {uid}")
+        submitted[uid] = {"task": task, "dnbr_path": None}
+    return submitted
+
+
+def wait_and_download_dnbr(submitted, poll_seconds=30):
+    """Phase 2: wait for every submitted task together (polling all of them, not
+    one at a time), downloading each as soon as it completes. Mutates and returns
+    `submitted` with `dnbr_path` filled in for every fire.
+    """
+    import time
+
+    pending = {uid: s for uid, s in submitted.items() if s["task"] is not None}
+    while pending:
+        done = []
+        for uid, s in pending.items():
+            if not s["task"].active():
+                status = s["task"].status()
+                if status["state"] != "COMPLETED":
+                    raise RuntimeError(f"Earth Engine export failed for {uid}: {status}")
+                s["dnbr_path"] = download_dnbr(uid)
+                print(f"{uid}: dNBR ready")
+                done.append(uid)
+        for uid in done:
+            pending.pop(uid)
+        if pending:
+            time.sleep(poll_seconds)
+    return submitted
+
+
 def build_cell_table(
     uid,
     utm_epsg,             # fire's local UTM zone, for the inner-burn buffer
@@ -48,6 +105,7 @@ def build_cell_table(
     pad=0.15,
     min_agb_before=10,
     forest_type_year=2019,
+    dnbr_path=None,       # pass a path already fetched via submit_dnbr_tasks/wait_and_download_dnbr
 ):
     """Returns a per-cell DataFrame for one fire: dnbr, severity, height, forest_type,
     and biomass loss against each year in `agb_after_years`. Earth Engine must already
@@ -89,14 +147,15 @@ def build_cell_table(
         resampling=Resampling.average,
     )
 
-    dnbr_path = f"../data/severity/dnbr_{uid}.tif"
-    if not os.path.exists(dnbr_path):
-        dnbr_image = build_dnbr(aoi_ee, *pre_fire_window, *post_fire_window)
-        task = export_dnbr(dnbr_image, uid, aoi_ee)
-        _wait_for_task(task)
-        dnbr_path = download_dnbr(uid)
-    else:
-        print(f"reusing cached dNBR for {uid}: {dnbr_path}")
+    if dnbr_path is None:
+        dnbr_path = f"../data/severity/dnbr_{uid}.tif"
+        if not os.path.exists(dnbr_path):
+            dnbr_image = build_dnbr(aoi_ee, *pre_fire_window, *post_fire_window)
+            task = export_dnbr(dnbr_image, uid, aoi_ee)
+            _wait_for_task(task)
+            dnbr_path = download_dnbr(uid)
+        else:
+            print(f"reusing cached dNBR for {uid}: {dnbr_path}")
 
     dnbr_arr, tr_d, crs_d = read_window(dnbr_path, bounds)
     dnbr_100m = reproject_to_grid(

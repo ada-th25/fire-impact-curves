@@ -194,7 +194,7 @@ Three more fires were added (two more Evergreen Broadleaf, one Deciduous Broadle
 
 **A per-fire label mismatch.** Two of the three new fires' Fire Atlas `landcover` label did not match their actual pixel-level forest type: one labelled "Deciduous Broadleaf" was 79% Evergreen Broadleaf at the pixel level, one labelled "Mixed forest" was 95% Evergreen Broadleaf. The Atlas's per-fire dominant-landcover label cannot be relied on to find fires of a given forest type, only the pixel-level `forest_type` column (used throughout the pipeline) can.
 
-**Usable fits** (not degenerate, past the minimum thresholds):
+**Usable fits, superseded by Section 13's full 11-fire, fallback-corrected numbers below, kept here only as the original by-fire uncertainty example:**
 
 | Group | Fires | Cells | l_max | x0 (dNBR midpoint) |
 |---|---|---|---|---|
@@ -218,7 +218,23 @@ Rerunning all 11 fires through this: `unknown` dropped from 20.7% to 14.9% of al
 
 **Batch runs now live in `notebooks/run_pipeline.ipynb`**, not `data.ipynb`. It defines every fire's config in one place, loops `build_cell_table`, saves the pooled table to `data/processed/all_cells.parquet`, and reports the forest-type recovery comparison. `data.ipynb` remains as the exploratory/diagnostic record of how the issues in Sections 8 to 13 were found.
 
+With all 11 fires and the fallback applied, the usable curves are:
+
+| Group | Fires | Cells | l_max | x0 (dNBR midpoint) |
+|---|---|---|---|---|
+| Evergreen Broadleaf, 10-20m | 6 | 15,324 | 36.4% | 0.35 |
+| Evergreen Needleleaf, 10-20m | 5 | 73,784 | 19.9% | 0.52 |
+| Evergreen Needleleaf, >20m | 5 | 137,223 | 46.0% | 0.58 |
+
+`<10m` (both forest types), `Evergreen Broadleaf >20m`, `Deciduous Broadleaf`, and `Mixed` remain excluded (degenerate or insufficient data).
+
 **Conclusion.** The forest-type fallback is a genuine, if modest, improvement, worth keeping. The new degenerate-fit case is a reminder that small-sample curve fits need active scrutiny, not just a status check, every group should be eyeballed before being trusted, not assumed safe because `curve_fit` didn't raise an exception.
+
+## 14. Scaling to many more fires: parallel exports, and a sampling-bias caveat
+
+The supervisor's feedback at this point: the curves need many more fires to be representative, not a handful. Running fires one at a time, each waiting ~10-15 minutes for its own dNBR export before the next one starts, does not scale to dozens of fires. `src/pipeline.py` now splits the dNBR step into `submit_dnbr_tasks` (submit every fire's export to Earth Engine at once) and `wait_and_download_dnbr` (poll all of them together, downloading each as it finishes), since Earth Engine runs exports independently on its own servers, N fires submitted together take roughly as long as 1, not N times as long. `build_cell_table` accepts a pre-fetched `dnbr_path` to skip its own export step when called this way. `notebooks/run_pipeline.ipynb` uses this two-phase pattern.
+
+**A sampling-bias caveat worth fixing before scaling.** Every fire chosen so far (Sections 9-11, 14) was picked as the *largest* fire of its forest type within a region, for a practical reason (a bigger fire gives more cells to work with), but this is not a representative sample: it systematically oversamples large, likely high-exposure fires and undersamples the small-to-medium fires that make up most of the Section 5 candidate list (median fire size in that list is about 10 km2, versus several hundred km2 for everything chosen so far). A curve built only from large fires may not generalise to a typical one. Scaling up should sample more broadly within each stratum (for example, a random or size-stratified draw within each region x forest-type group), not just take the top 1-2 by size again.
 
 ## Infrastructure
 

@@ -24,6 +24,41 @@ def load_fire(uid):
     return fire
 
 
+def derive_fire_params(row, window_days=75, gap_days=14):
+    """Generic pre/post-fire windows and AGB before/after years from a fire's own
+    start_date, instead of hand-picking dates per fire (needed to scale beyond a
+    handful of fires - see README Section 14). `row` needs start_date (a
+    pd.Timestamp), uid, lon, lat (as in the Section 5 candidate parquet).
+
+    Pre-fire window: `window_days` long, ending `gap_days` before the fire started.
+    Post-fire window: the same window, exactly one year later (same season, per
+    README Section 9's rationale for why same-season is used).
+    AGB before year: the year before the fire started (matches every fire run so
+    far: 2019 for 2020 fires, 2020 for 2021 fires). After years: the following one
+    or two years, capped at 2022 (last available CCI AGB v6.0 year).
+    """
+    import pandas as pd
+
+    start = pd.Timestamp(row["start_date"])
+    pre_end = start - pd.Timedelta(days=gap_days)
+    pre_start = pre_end - pd.Timedelta(days=window_days)
+    post_start = pre_start + pd.DateOffset(years=1)
+    post_end = pre_end + pd.DateOffset(years=1)
+
+    fire_year = start.year
+    agb_after_years = [y for y in (fire_year + 1, fire_year + 2) if y <= 2022]
+    if not agb_after_years:
+        agb_after_years = [2022]
+
+    return dict(
+        uid=row["uid"], lon=row["lon"], lat=row["lat"],
+        pre_fire_window=(pre_start.strftime("%Y-%m-%d"), pre_end.strftime("%Y-%m-%d")),
+        post_fire_window=(post_start.strftime("%Y-%m-%d"), post_end.strftime("%Y-%m-%d")),
+        agb_before_year=fire_year - 1,
+        agb_after_years=agb_after_years,
+    )
+
+
 def utm_epsg_for(lon, lat):
     """UTM zone EPSG code for a point, e.g. for `inner_burn_area`'s buffer distance
     to be in real metres. Standard 6-degree UTM zones; not valid above ~84N/80S.

@@ -188,6 +188,26 @@ The result itself is not yet usable as a broadleaf curve: this is one small fire
 
 **Conclusion.** Infrastructure milestone, not a results milestone. The pipeline (height, biomass, severity, forest type) now works for an arbitrary fire anywhere the GLAD mosaics cover. Producing an actual height x forest-type curve still needs many more fires pooled per group, which is a scope decision (how many fires, which regions, how much further to investigate the open data-quality questions in Sections 8 to 10) that should be checked with the supervisor before continuing to scale.
 
+## 12. First fitted curve, with by-fire uncertainty
+
+Three more fires were added (two more Evergreen Broadleaf, one Deciduous Broadleaf, one Mixed, by the Fire Atlas's own labels), bringing the total to 8 fires, 282,107 cells. Curve fitting (`src/curves.py`) fits a three-parameter logistic per height x forest-type group, requiring at least 3 fires and 200 cells, and flags any fit where the steepness parameter hits its upper bound as `degenerate_fit` rather than reporting it as real, this correctly caught both `<10m` groups, consistent with the known height-on-steep-terrain issue (#8).
+
+**A per-fire label mismatch.** Two of the three new fires' Fire Atlas `landcover` label did not match their actual pixel-level forest type: one labelled "Deciduous Broadleaf" was 79% Evergreen Broadleaf at the pixel level, one labelled "Mixed forest" was 95% Evergreen Broadleaf. The Atlas's per-fire dominant-landcover label cannot be relied on to find fires of a given forest type, only the pixel-level `forest_type` column (used throughout the pipeline) can.
+
+**Usable fits** (not degenerate, past the minimum thresholds):
+
+| Group | Fires | Cells | l_max | x0 (dNBR midpoint) |
+|---|---|---|---|---|
+| Evergreen Broadleaf, 10-20m | 4 | 1,522 | 49.4% | 0.25 |
+| Evergreen Needleleaf, 10-20m | 5 | 71,620 | 20.0% | 0.52 |
+| Evergreen Needleleaf, >20m | 5 | 136,962 | 46.0% | 0.58 |
+
+`Deciduous Broadleaf`, `Mixed`, and `Evergreen Broadleaf >20m` still have insufficient data (1-3 fires, as few as 41 cells).
+
+**By-fire uncertainty is large.** A by-fire bootstrap (resample fires with replacement, not pixels, refit, repeat 500 times, `bootstrap_curve_band`) on the Evergreen Broadleaf group shows an 80% band of roughly 26% to 67% predicted loss at moderate-to-severe severity (dNBR >= 0.5), around a median of 46%, more than a 2.5x range. The underlying per-fire severity means bear this out directly: `mild` loss alone ranges from -3.9% to 32.2% across the four fires. The curve's shape (rising from near zero at mild severity to a plateau around dNBR 0.5-0.6) matches what the roadmap expects, but the uncertainty is too wide yet to be a useful number on its own.
+
+**Conclusion.** This is the first result close to the actual deliverable, a fitted curve with uncertainty computed by fire, as the roadmap specifies, not by pixel. It also confirms the band is still far too wide with only 4 fires per group. More fires per group are needed before any curve here is narrow enough to be useful, and the Atlas-label mismatch means fires cannot be pre-selected by forest type with confidence, composition has to be checked per fire after running the pipeline.
+
 ## Infrastructure
 
 - GCP project `tree-fire` (display name), project ID `tree-fire-510209`; Vertex AI Workbench instance `tree-fire-workbench`, zone `europe-west2-a`; Python venv `.venv` with earthengine-api, geemap, pandas, geopandas, pyarrow, ipykernel, rasterio, pyogrio.

@@ -112,6 +112,8 @@ def build_cell_table(
     min_agb_before=10,
     forest_type_year=2019,
     dnbr_path=None,       # pass a path already fetched via submit_dnbr_tasks/wait_and_download_dnbr
+    fire_start_end=None,  # (start_date, end_date) of the fire itself; required only if firms_map_key is set
+    firms_map_key=None,   # set to also fetch brightness_temp (src/temperature.py); off by default
 ):
     """Returns a per-cell DataFrame for one fire: dnbr, severity, height, forest_type,
     and biomass loss against each year in `agb_after_years`. Earth Engine must already
@@ -120,6 +122,11 @@ def build_cell_table(
     Biomass and forest type are fetched from Earth Engine directly (any fire,
     anywhere); height still needs a continental mosaic looked up by location
     (src/height.py), and raises if that fire's continent isn't configured yet.
+
+    Pass `firms_map_key` (and `fire_start_end`) to also fetch brightness
+    temperature (src/temperature.py) as an extra `brightness_temp` column,
+    alongside `dnbr`, not replacing it - off by default, so existing callers
+    are unaffected.
     """
     fire = load_fire(uid)
     bounds = pad_bounds(fire.total_bounds, pad)
@@ -187,6 +194,17 @@ def build_cell_table(
     data = {"uid": uid, "height": height_100m[keep], "dnbr": dnbr_100m[keep],
             "forest_type": forest_type_100m[keep],
             "forest_type_label": resolve_label(forest_type_100m[keep], discrete_100m[keep])}
+
+    if firms_map_key is not None:
+        if fire_start_end is None:
+            raise ValueError("fire_start_end=(start_date, end_date) is required when firms_map_key is set")
+        from .temperature import aggregate_to_grid, fetch_firms
+
+        firms_df = fetch_firms(bounds, *fire_start_end, map_key=firms_map_key)
+        bt_100m, bt_count_100m = aggregate_to_grid(firms_df, shape, tr_ref)
+        print(f"{uid}: {len(firms_df)} FIRMS detections, covering "
+              f"{(bt_count_100m[keep] > 0).sum()} of {keep.sum()} kept cells")
+        data["brightness_temp"] = bt_100m[keep]
     data[f"a{agb_before_year}"] = agb[agb_before_year][keep]
     for yr in agb_after_years:
         data[f"a{yr}"] = agb[yr][keep]

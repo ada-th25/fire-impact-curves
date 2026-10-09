@@ -30,55 +30,61 @@ from .fires import inner_burn_area, load_fire
 from .forest_type import download_discrete, download_forest_type, resolve_label
 from .grids import pad_bounds, read_window, reproject_to_grid
 from .height import height_mosaic_for
-from .severity import build_dnbr, download_dnbr, export_dnbr
+from .severity import build_severity, download_severity, export_severity
 
 DNBR_DROP_BELOW = 0.1   # see README Section 9
 SEVERITY_BINS = [DNBR_DROP_BELOW, 0.27, 0.66, 2.0]
 SEVERITY_LABELS = ["mild", "moderate", "severe"]
 
 
-def submit_dnbr_tasks(fire_configs, pad=0.15):
-    """Phase 1 of a batch run: submit every fire's dNBR export to Earth Engine at
-    once, rather than one fire at a time inside build_cell_table. Earth Engine runs
-    each export independently on its own servers, so N fires submitted together
-    take roughly as long as 1, not N times as long - this is what makes running
-    "many fires" (per the roadmap/supervisor) practical instead of an all-day wait.
+def submit_severity_tasks(fire_configs, pad=0.15):
+    """Phase 1 of a batch run: submit every fire's severity (dNBR + RBR) export to
+    Earth Engine at once, rather than one fire at a time inside build_cell_table.
+    Earth Engine runs each export independently on its own servers, so N fires
+    submitted together take roughly as long as 1, not N times as long - this is
+    what makes running "many fires" (per the roadmap/supervisor) practical instead
+    of an all-day wait.
 
     `fire_configs` is the same list of dicts passed to build_cell_table (must
     include uid, pre_fire_window, post_fire_window). Returns a dict
-    {uid: {"task": Task or None, "dnbr_path": str or None}} - `task` is None and
-    `dnbr_path` is already set for any fire whose dNBR is already cached locally.
-    Pass this dict's per-uid entry to build_cell_table's `dnbr_path=` after calling
-    `wait_and_download_dnbr` on it.
+    {uid: {"task": Task or None, "severity_path": str or None}} - `task` is None
+    and `severity_path` is already set for any fire whose severity file is already
+    cached locally. Pass this dict's per-uid entry to build_cell_table's
+    `severity_path=` after calling `wait_and_download_severity` on it.
+
+    Note: this uses a new filename prefix (`severity_`), not the old `dnbr_`-only
+    cache from before RBR was added, so every fire needs a fresh export here even
+    if its old dNBR-only file is still on disk (that file only has one band, not
+    the two RBR needs - see severity.py).
     """
     submitted = {}
     for cfg in fire_configs:
         uid = cfg["uid"]
-        dnbr_path = f"../data/severity/dnbr_{uid}.tif"
-        if os.path.exists(dnbr_path):
-            print(f"reusing cached dNBR for {uid}: {dnbr_path}")
-            submitted[uid] = {"task": None, "dnbr_path": dnbr_path}
+        severity_path = f"../data/severity/severity_{uid}.tif"
+        if os.path.exists(severity_path):
+            print(f"reusing cached severity for {uid}: {severity_path}")
+            submitted[uid] = {"task": None, "severity_path": severity_path}
             continue
         try:
             fire = load_fire(uid)
             bounds = pad_bounds(fire.total_bounds, pad)
             aoi_ee = _ee_rectangle(bounds)
-            dnbr_image = build_dnbr(aoi_ee, *cfg["pre_fire_window"], *cfg["post_fire_window"])
-            task = export_dnbr(dnbr_image, uid, aoi_ee)
-            print(f"submitted dNBR export for {uid}")
-            submitted[uid] = {"task": task, "dnbr_path": None}
+            severity_image = build_severity(aoi_ee, *cfg["pre_fire_window"], *cfg["post_fire_window"])
+            task = export_severity(severity_image, uid, aoi_ee)
+            print(f"submitted severity export for {uid}")
+            submitted[uid] = {"task": task, "severity_path": None}
         except Exception as e:
             # one fire failing (e.g. an ambiguous uid, see fires.py) must not lose
             # the Task handles for every other fire already submitted this run
             print(f"{uid} FAILED to submit: {e}")
-            submitted[uid] = {"task": None, "dnbr_path": None, "error": str(e)}
+            submitted[uid] = {"task": None, "severity_path": None, "error": str(e)}
     return submitted
 
 
-def wait_and_download_dnbr(submitted, poll_seconds=30):
+def wait_and_download_severity(submitted, poll_seconds=30):
     """Phase 2: wait for every submitted task together (polling all of them, not
     one at a time), downloading each as soon as it completes. Mutates and returns
-    `submitted` with `dnbr_path` filled in for every fire.
+    `submitted` with `severity_path` filled in for every fire.
     """
     import time
 
@@ -90,8 +96,8 @@ def wait_and_download_dnbr(submitted, poll_seconds=30):
                 status = s["task"].status()
                 if status["state"] != "COMPLETED":
                     raise RuntimeError(f"Earth Engine export failed for {uid}: {status}")
-                s["dnbr_path"] = download_dnbr(uid)
-                print(f"{uid}: dNBR ready")
+                s["severity_path"] = download_severity(uid)
+                print(f"{uid}: severity ready")
                 done.append(uid)
         for uid in done:
             pending.pop(uid)
@@ -111,13 +117,14 @@ def build_cell_table(
     pad=0.15,
     min_agb_before=10,
     forest_type_year=2019,
-    dnbr_path=None,       # pass a path already fetched via submit_dnbr_tasks/wait_and_download_dnbr
+    severity_path=None,   # pass a path already fetched via submit_severity_tasks/wait_and_download_severity
     fire_start_end=None,  # (start_date, end_date) of the fire itself; required only if firms_map_key is set
     firms_map_key=None,   # set to also fetch brightness_temp (src/temperature.py); off by default
 ):
-    """Returns a per-cell DataFrame for one fire: dnbr, severity, height, forest_type,
-    and biomass loss against each year in `agb_after_years`. Earth Engine must already
-    be initialised (ee.Authenticate() + ee.Initialize(project=...)) before calling.
+    """Returns a per-cell DataFrame for one fire: dnbr, rbr, severity, height,
+    forest_type, and biomass loss against each year in `agb_after_years`. Earth
+    Engine must already be initialised (ee.Authenticate() + ee.Initialize(project=...))
+    before calling.
 
     Biomass and forest type are fetched from Earth Engine directly (any fire,
     anywhere); height still needs a continental mosaic looked up by location
@@ -160,19 +167,25 @@ def build_cell_table(
         resampling=Resampling.average,
     )
 
-    if dnbr_path is None:
-        dnbr_path = f"../data/severity/dnbr_{uid}.tif"
-        if not os.path.exists(dnbr_path):
-            dnbr_image = build_dnbr(aoi_ee, *pre_fire_window, *post_fire_window)
-            task = export_dnbr(dnbr_image, uid, aoi_ee)
+    if severity_path is None:
+        severity_path = f"../data/severity/severity_{uid}.tif"
+        if not os.path.exists(severity_path):
+            severity_image = build_severity(aoi_ee, *pre_fire_window, *post_fire_window)
+            task = export_severity(severity_image, uid, aoi_ee)
             _wait_for_task(task)
-            dnbr_path = download_dnbr(uid)
+            severity_path = download_severity(uid)
         else:
-            print(f"reusing cached dNBR for {uid}: {dnbr_path}")
+            print(f"reusing cached severity for {uid}: {severity_path}")
 
-    dnbr_arr, tr_d, crs_d = read_window(dnbr_path, bounds)
+    dnbr_arr, tr_d, crs_d = read_window(severity_path, bounds, band=1)
     dnbr_100m = reproject_to_grid(
         np.nan_to_num(dnbr_arr, nan=-9999).astype("float32"), tr_d, crs_d, shape, tr_ref, crs_ref,
+        resampling=Resampling.average, nodata_below=-100,
+    )
+
+    rbr_arr, tr_r, crs_r = read_window(severity_path, bounds, band=2)
+    rbr_100m = reproject_to_grid(
+        np.nan_to_num(rbr_arr, nan=-9999).astype("float32"), tr_r, crs_r, shape, tr_ref, crs_ref,
         resampling=Resampling.average, nodata_below=-100,
     )
 
@@ -192,6 +205,7 @@ def build_cell_table(
     )
 
     data = {"uid": uid, "height": height_100m[keep], "dnbr": dnbr_100m[keep],
+            "rbr": rbr_100m[keep],
             "forest_type": forest_type_100m[keep],
             "forest_type_label": resolve_label(forest_type_100m[keep], discrete_100m[keep])}
 

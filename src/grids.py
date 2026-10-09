@@ -9,7 +9,7 @@ from rasterio.warp import Resampling, reproject, transform_bounds
 from rasterio.windows import from_bounds
 
 
-def read_window(path, bounds, masked=True, bounds_crs="EPSG:4326"):
+def read_window(path, bounds, masked=True, bounds_crs="EPSG:4326", band=1):
     """Read the sub-array of `path` covering `bounds` (w, s, e, n, in `bounds_crs`,
     EPSG:4326/lon-lat by default, which is what every bounds tuple in this project
     is computed in). `bounds` is reprojected into the raster's own CRS first, so
@@ -18,12 +18,15 @@ def read_window(path, bounds, masked=True, bounds_crs="EPSG:4326"):
     come back in something else, like EPSG:3857 - using the lon/lat bounds directly
     against such a file's transform silently produces an empty, ~0x0 window).
 
+    `band` selects which band to read (1-indexed, rasterio convention), for
+    multi-band files such as the dNBR+RBR severity export.
+
     Returns (array, transform, crs) for just that window, rounded to whole pixels.
     """
     with rasterio.open(path) as src:
         w, s, e, n = transform_bounds(bounds_crs, src.crs, *bounds)
         win = from_bounds(w, s, e, n, src.transform).round_offsets().round_lengths()
-        arr = src.read(1, window=win, masked=masked)
+        arr = src.read(band, window=win, masked=masked)
         if masked:
             arr = arr.astype("float64").filled(np.nan)
         transform = src.window_transform(win)

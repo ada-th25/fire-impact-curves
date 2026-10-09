@@ -57,8 +57,12 @@ def build_severity(aoi, pre_start, pre_end, post_start, post_end):
     nbr_pre, n_pre = _composite(aoi, pre_start, pre_end)
     nbr_post, n_post = _composite(aoi, post_start, post_end)
     print(f"pre {pre_start}..{pre_end}: {n_pre} images; post {post_start}..{post_end}: {n_post} images")
-    dnbr = nbr_pre.subtract(nbr_post).rename("dNBR")
-    rbr = dnbr.divide(nbr_pre.add(1.001)).rename("RBR")
+    dnbr = nbr_pre.subtract(nbr_post).rename("dNBR").toFloat()
+    # toFloat(): divide() promotes to Float64, but dNBR stays Float32 - Earth
+    # Engine's exporter rejects a multi-band image with mismatched band dtypes
+    # ("Exported bands must have compatible data types"), so both bands must
+    # match explicitly rather than relying on each band's natural output type.
+    rbr = dnbr.divide(nbr_pre.add(1.001)).rename("RBR").toFloat()
     return dnbr.addBands(rbr).clip(aoi)
 
 

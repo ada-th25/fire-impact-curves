@@ -95,9 +95,15 @@ def wait_and_download_severity(submitted, poll_seconds=30):
             if not s["task"].active():
                 status = s["task"].status()
                 if status["state"] != "COMPLETED":
-                    raise RuntimeError(f"Earth Engine export failed for {uid}: {status}")
-                s["severity_path"] = download_severity(uid)
-                print(f"{uid}: severity ready")
+                    # one fire's export failing (e.g. a transient EE error, or a
+                    # bug like the dNBR/RBR dtype mismatch) must not stop polling
+                    # or lose the severity_path already downloaded for every
+                    # other fire in this batch
+                    print(f"{uid} FAILED: {status}")
+                    s["error"] = status
+                else:
+                    s["severity_path"] = download_severity(uid)
+                    print(f"{uid}: severity ready")
                 done.append(uid)
         for uid in done:
             pending.pop(uid)

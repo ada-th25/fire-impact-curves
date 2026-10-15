@@ -26,10 +26,10 @@ Consequence for this project: tree-level equations cannot be applied directly at
 | Layer | Role | Source and version | Access | Status |
 |---|---|---|---|---|
 | Fire list (location, start/end date, size, land cover) | Which fires to study | Global Fire Atlas, updated version v20240409, Zenodo record 11400062 (`SHP_perimeters.zip`, 2.84 GB, yearly shapefiles 2002-2024) | Direct download | Downloaded |
-| Above-ground biomass (AGB) and its per-pixel SD | Carbon before and after the fire (outcome variable) | ESA CCI Biomass v6.0, 100 m, years 2007, 2010, 2015-2022, from CEDA archive, tile N40W130 for the pilot | Direct download (`wget`) | Pilot tile for 2019, 2021, 2022 downloaded |
-| Canopy height | Pre-fire height class | GLAD global forest canopy height 2019 (Potapov et al.), 30 m, continental mosaic `Forest_height_2019_NAM.tif` (5.7 GB) | Direct download | Downloaded |
-| Fire severity | Explanatory variable | Landsat 8/9, Sentinel-2 (dNBR); VIIRS FRP from FIRMS | Planned via Earth Engine | Not started |
-| Fire vs non-fire forest loss | Remove logging, clearing, storms | Tyukavina et al. fire-loss layer (Earth Engine asset, covers 2001-2023 in the version I found) | Earth Engine | Not started |
+| Above-ground biomass (AGB) and its per-pixel SD | Carbon before and after the fire (outcome variable) | ESA CCI Biomass v6.0, 100 m, years 2007, 2010, 2015-2022 | Earth Engine (`ESA/CCI/Above_Ground_Biomass/V6_0`), superseded the original CEDA tile download | Implemented, any fire globally (Section 11) |
+| Canopy height | Pre-fire height class | GLAD global forest canopy height 2019 (Potapov et al.), 30 m, continental mosaics | Direct download | All 7 continental mosaics downloaded and confirmed (Section 11); GLAD itself covers ~52°S-52°N only |
+| Fire severity | Explanatory variable | Sentinel-2 (dNBR, RBR) via Earth Engine | Earth Engine | Implemented (Sections 9, 15) |
+| Fire vs non-fire forest loss | Remove logging, clearing, storms | Tyukavina et al. fire-loss layer (Earth Engine asset, covers 2001-2023 in the version I found) | Earth Engine | Used once as a cross-check (Section 8), not part of the main pipeline |
 | Biome | Stratify sampling | WWF/RESOLVE ecoregions | Direct download | Not started (GFED region code used as a stand-in) |
 
 Why each was chosen:
@@ -268,13 +268,36 @@ Under dNBR these three are already close together (spread ~0.04). Under RBR, Mix
 
 Two open questions that this still does not answer: (1) why loss plateaus around 50-60% rather than closer to 90% - the leading hypothesis is CCI biomass counting standing dead trees as still present, plus 100 m pixel averaging and only 1-2 years elapsed since the fire, not tree height specifically (Evergreen Needleleaf's >20m group actually shows a *higher* l_max than its 10-20m group, the opposite of what "tall trees survive better" would predict); (2) Sentinel-1 SAR-based burn severity (Bilal's suggestion) has a plausible rationale (CCI biomass is itself partly SAR-derived, and SAR penetrates cloud/smoke, useful for the cloudier tropical fires in this project) but no standardised formula like dNBR exists for it, so it needs real investigation before it could be added, not a quick formula swap like RBR was.
 
+## 16. Plot clarity fix, and targeting underrepresented forest types
+
+**The uncertainty band was being misread.** Most per-fire dots fall outside the shaded band, which reads at a glance like the curve is wrong. The band is a confidence interval for the *pooled curve*, built by resampling which fires are included and refitting, it narrows as fires are added because it reflects confidence in the average, not the spread of individual fires. Individual fires vary for real reasons (local conditions, measurement noise) that more data does not shrink, so dots outside this band are expected, not a fault. More fires would in fact narrow the band further and push *more* dots outside it, the opposite of what was hoped. The plotting cell now adds a second band, the 10th-90th percentile of actual per-fire severity-class means, so the chart shows both "confidence in the trend" and "spread of real fires" side by side, clearly labelled. A proper test of whether the curve predicts well, leave-one-fire-out cross-validation, is planned but not yet implemented.
+
+**Forest-type coverage check.** CGLS-LC100 has 5 real forest classes; at 118 fires only 3 reach a usable (`fitted`) curve in any height class, Evergreen Needleleaf, Evergreen Broadleaf, Mixed. Deciduous Broadleaf has a reasonable fire count (10-40 per height class) but stays `degenerate_fit` throughout, likely too little spread of severity values within those fires rather than too few fires. Deciduous Needleleaf is stuck at `insufficient_data` (1-3 fires per height class).
+
+**Targeted top-up, given Artio insures globally and the sample so far is geographically narrow.** Checked the full candidate list directly: 1,840 unused Deciduous Broadleaf fires exist (healthy pool), sampled 49 across six GFED regions (8 per region, `size >= 20 km2`). Deciduous Needleleaf is genuinely scarce, only 16 fires exist globally in the whole 2020-2021 window, 5 at the usual `size >= 20` threshold; lowered the threshold to `size >= 5` to recover 11 fires, essentially all of what exists. This is a real data scarcity, not a sampling gap, Deciduous Needleleaf may stay thin regardless of effort here. Combined sample: 216 fires queued (two excluded for the known ambiguous-`uid` issue, Section 14). Re-run not yet complete at time of writing.
+
+## 17. Height-mosaic routing bug: a silent cause of bad data, not just failed downloads
+
+Scaling the sample to 216 fires surfaced 56 build failures, all with the same cryptic GDAL error, `Invalid dataset dimensions: W x 0`. First suspected the AGB and forest-type downloads (both use a thumbnail-style `geemap.ee_export_image` call with a known request-size limit), and migrated both to the same batch-export-to-GCS pattern already used for severity (`submit_agb_tasks`/`wait_and_download_agb` in `biomass.py`, `submit_landcover_tasks`/`wait_and_download_landcover` in `forest_type.py`, mirroring `severity.py`). That fixed some of the 56, but most still failed identically, with files confirmed healthy on disk (correct width and height, valid CRS and bounds, checked directly with `rasterio.open`).
+
+Tracing one failure end to end (`build_cell_table` without its `try/except`, full traceback) showed the actual failure point was `reproject_to_grid` on the **height** array, not AGB or severity. `height_mosaic_for` picks a continental GLAD mosaic by checking a fire's (lon, lat) against a routing box per mosaic, `CONTINENT_MOSAICS` in `height.py`. Those boxes were rough, generous guesses (e.g. NAM claimed lat 5-75°N), not the mosaic files' real extent. Checking all seven mosaics directly (`rasterio.open` against each live URL) showed the real extents are tighter and don't overlap the way the routing boxes implied, NAM's real coverage is lat ~13-52°N. Two distinct failure modes followed from this:
+
+- **Misrouting**: fires at ~10°N (Colombia, Venezuela) fall inside SAM's real coverage (real top ~13°N) but were sent to NAM instead, because NAM's routing box wrongly claimed down to 5°N. `read_window` against NAM for a fire NAM doesn't actually cover returned a 0-height array, which only blew up later, deep inside `reproject_to_grid`, with no indication the real cause was a height-mosaic mismatch.
+- **Genuinely out of coverage**: the remaining fires (a cluster in boreal Russia/Siberia, lon ~88-153°E lat ~52-63°N, plus one in Canada at ~52.5°N) sit outside every mosaic's real extent, GLAD's actual global coverage stops at ~52°N (the boreal limitation already noted in known issue #4). No routing fix recovers these, this is a genuine data gap.
+
+Fixed `CONTINENT_MOSAICS` to each mosaic's real bounds (confirmed per-file, not re-estimated), and changed `height_mosaic_for`'s failure mode: a fire outside every mosaic's real coverage now raises immediately and clearly (`"no height mosaic covers (lon, lat)"`), instead of silently returning bad data that fails unpredictably three steps later. Of the 56 original failures, 28 were misrouted and now succeed, 28 are genuinely beyond GLAD's coverage and are excluded, correctly and explicitly, rather than failing with a misleading error.
+
+**A second, separate issue found while reviewing the resulting curves**: `fit_group`'s degenerate check only caught the steepness parameter `k` pegged at its *upper* bound (a step function). `mixed, >20m` pegged at the *opposite* extreme, `k` near 0 (an almost flat line), and was reported as `fitted` even though the fitted line visibly ignored a real upward trend in the underlying per-fire data. Added a matching check for `k` near its lower bound; verified it doesn't reclassify any currently-fitted group (the smallest genuine `k` across all fitted groups is ~13.8, the new threshold is 0.5).
+
+**Result after both fixes**: 154 fires, 507,016 cells (up from 135/499,036 before this round). Deciduous Broadleaf reaches `fitted` status in two of three height classes for the first time (`<10m`: `l_max=0.166`, 54 fires; `10-20m`: `l_max=0.182`, 71 fires), both bug fixes contributed, not just the Section 16 sampling top-up. `mixed, >20m` dropped out of the usable set, correctly, it was never a real fit.
+
 ## Infrastructure
 
 - GCP project `tree-fire` (display name), project ID `tree-fire-510209`; Vertex AI Workbench instance `tree-fire-workbench`, zone `europe-west2-a`; Python venv `.venv` with earthengine-api, geemap, pandas, geopandas, pyarrow, ipykernel, rasterio, pyogrio.
 - Earth Engine use requires the actual project ID (`tree-fire-510209`), not the display name, plus the project registered for Earth Engine access and the caller's account holding `roles/serviceusage.serviceUsageConsumer`.
 - All static layers were downloaded directly to the instance's disk under `data/`, which is gitignored.
-- A GCS bucket, `gs://tree-fire-510209-data`, in `europe-west2`, backs up `data/` and receives Earth Engine export outputs (such as dNBR) under `fire-impact-curves/data/...`, matching the local layout.
-- As of the `src/` pipeline (see "Reproducibility"), biomass and forest type are pulled from Earth Engine directly rather than downloaded per tile, so any fire globally works for those two without manual downloads. Height still needs a GLAD continental mosaic looked up by location (`src/height.py`), and only North America is confirmed so far, a fire elsewhere will raise until its mosaic is added.
+- A GCS bucket, `gs://tree-fire-510209-data`, in `europe-west2`, is a required intermediate for severity exports (`Export.image.toCloudStorage` lands there, then `gsutil cp` pulls it onto the instance). It is **not** an automatic backup of `data/`: everything else lives only on the instance's disk unless manually synced, for example `gsutil -m rsync -r data/processed gs://tree-fire-510209-data/fire-impact-curves/data/processed`.
+- As of the `src/` pipeline (see "Reproducibility"), biomass and forest type are pulled from Earth Engine directly rather than downloaded per tile, so any fire globally works for those two without manual downloads. Height needs the right GLAD continental mosaic looked up by location (`src/height.py`); all seven mosaics are now confirmed and configured (Section 11), though GLAD's own coverage stops at roughly 52°S-52°N, so high-latitude boreal fires have no usable height regardless of mosaic.
 
 ## Reproducibility
 
@@ -312,10 +335,10 @@ Downloaded on 2 Oct 2026, superseded for biomass by the Earth Engine source belo
 - `severity.py`: dNBR and RBR (Section 15) from Sentinel-2 via Earth Engine.
 - `temperature.py`: brightness temperature from FIRMS, optional, off by default (Section 14).
 - `forest_type.py`: forest type (CGLS-LC100, Earth Engine asset `COPERNICUS/Landcover/100m/Proba-V-C3/Global`, band `forest_type`), any fire globally, legend confirmed in that module's docstring.
-- `height.py`: canopy height (GLAD), still needs the right continental mosaic looked up by the fire's location, only North America is confirmed so far.
-- `pipeline.py`: `build_cell_table(uid, ...)`, ties the above together for one fire.
+- `height.py`: canopy height (GLAD), continental mosaic looked up by the fire's location, all seven mosaics confirmed and configured (Section 11); GLAD's own data only covers ~52°S-52°N regardless.
+- `pipeline.py`: `build_cell_table(uid, ...)`, ties the above together for one fire; `submit_severity_tasks`/`wait_and_download_severity` for running many fires in parallel (Section 14).
 
-See the pipeline cells near the end of `notebooks/data.ipynb` for example calls across the four fires run so far (Sections 9 and 10). Still needed before running this over the full Section 5 sample: GLAD height mosaics for continents other than North America, and resolving the steep-terrain height reliability issue (known issue #8).
+Batch runs live in `notebooks/run_pipeline.ipynb` (Section 13), run top to bottom: imports, fire configs, stratified sampling, submit/wait/build, pooling, curve fitting, plotting. `notebooks/data.ipynb` is the exploratory record of Sections 8-13's one-off diagnostics, not used for batch runs. Remaining open item: the steep-terrain height reliability issue (known issue #8).
 
 ## References
 

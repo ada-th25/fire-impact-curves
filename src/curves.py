@@ -49,9 +49,14 @@ def fit_group(df, dnbr_col="dnbr", loss_col="loss2022", min_fires=3, min_cells=2
         return {"status": "fit_failed", "error": str(e), "n_fires": n_fires, "n_cells": len(df)}
 
     # Flag rather than report alongside genuine fits when any of:
-    # - k pegged against its bound: an (almost) step function, the data didn't
-    #   constrain steepness. Seen so far concentrated in <10m, consistent with the
-    #   known GLAD-height-on-steep-terrain issue (README #8).
+    # - k pegged against its upper bound: an (almost) step function, the data
+    #   didn't constrain steepness. Seen so far concentrated in <10m, consistent
+    #   with the known GLAD-height-on-steep-terrain issue (README #8).
+    # - k pegged against its lower bound (near 0): the mirror image, a flat line
+    #   that says severity barely matters - just as untrustworthy when it isn't
+    #   genuinely supported by the dots. Found in `mixed, >20m` (k=0.0, x0 pegged
+    #   near its own upper bound of 2) reported as "fitted" despite the fitted
+    #   line visibly failing to track a real upward trend in the per-fire dots.
     # - l_max pegged against its bound: implies loss -> 100% as severity rises,
     #   which a handful of cells from a few fires cannot actually support.
     # - any parameter's std error exceeds its own plausible range: curve_fit found
@@ -60,6 +65,7 @@ def fit_group(df, dnbr_col="dnbr", loss_col="loss2022", min_fires=3, min_cells=2
     param_std_err = np.sqrt(np.diag(pcov))
     degenerate = (
         popt[1] >= k_upper_bound * 0.999
+        or popt[1] <= k_upper_bound * 0.01
         or popt[0] >= l_max_upper_bound * 0.999
         or param_std_err[0] > 1
         or param_std_err[1] > k_upper_bound

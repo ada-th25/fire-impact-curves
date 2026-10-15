@@ -60,6 +60,10 @@ DISCRETE_TO_LABEL = {
 }
 
 
+GCS_BUCKET = "tree-fire-510209-data"
+GCS_PREFIX = "fire-impact-curves/data/forest_type"
+
+
 def _get_band_image(band, year):
     coll = ee.ImageCollection(COLLECTION).filterDate(f"{year}-01-01", f"{year}-12-31")
     n = coll.size().getInfo()
@@ -76,28 +80,81 @@ def get_discrete_image(year=2019):
     return _get_band_image(DISCRETE_BAND, year)
 
 
-def _download_band(image, aoi, uid, band_name, year, local_dir, scale):
-    import os
-    import geemap
+def build_landcover(year=2019):
+    """Both bands (`forest_type`, `discrete_classification`) from the same source
+    image, as one 2-band image - one Earth Engine fetch, not two.
+    """
+    coll = ee.ImageCollection(COLLECTION).filterDate(f"{year}-01-01", f"{year}-12-31")
+    n = coll.size().getInfo()
+    if n == 0:
+        raise RuntimeError(f"no CGLS-LC100 image for {year}; check available years in the EE catalog")
+    return coll.first().select([FOREST_TYPE_BAND, DISCRETE_BAND])
 
-    img = image.clip(aoi)
+
+def export_landcover(image, uid, aoi, scale=100, max_pixels=1e9):
+    """Batch export to GCS, same pattern as severity.py's export_severity.
+
+    Replaces the earlier direct-thumbnail download (`geemap.ee_export_image` /
+    `getPixels`), which turned out to fail deterministically ("Invalid dataset
+    dimensions: W x 0") for a large, non-geography-specific share of fires once
+    run at scale (56 of 216 in one batch) - a request-size limit of the thumbnail
+    endpoint, not a transient error, since retrying the same fire failed with the
+    exact same malformed dimensions every time. Batch export has had zero
+    failures of this kind across 200+ fires for severity, so it is used here too.
+    """
+    task = ee.batch.Export.image.toCloudStorage(
+        image=image.clip(aoi),
+        description=f"landcover_{uid}",
+        bucket=GCS_BUCKET,
+        fileNamePrefix=f"{GCS_PREFIX}/landcover_{uid}",
+        region=aoi,
+        scale=scale,
+        maxPixels=max_pixels,
+    )
+    task.start()
+    return task
+
+
+def download_landcover(uid, local_dir="../data/forest_type"):
+    """Pull a completed export down via gsutil. Call only after
+    task.status()["state"] == "COMPLETED". Returns a 2-band file: band 1 is
+    `forest_type`, band 2 is `discrete_classification`.
+    """
+    import os
+    import subprocess
+
     os.makedirs(local_dir, exist_ok=True)
-    out_path = os.path.join(local_dir, f"{band_name}_{uid}.tif")
-    geemap.ee_export_image(img, filename=out_path, scale=scale, region=aoi, file_per_band=False)
+    out_path = os.path.join(local_dir, f"landcover_{uid}.tif")
+    src = f"gs://{GCS_BUCKET}/{GCS_PREFIX}/landcover_{uid}.tif"
+    subprocess.run(["gsutil", "cp", src, out_path], check=True)
     return out_path
 
 
 def download_forest_type(aoi, uid, year=2019, local_dir="../data/forest_type", scale=100):
-    """Direct download (not a batch export): a single categorical band for one year
-    is cheap enough that this should avoid the "User memory limit exceeded" error
-    the dNBR compositing hit. If it still fails on a larger AOI, fall back to the
-    same ee.batch.Export.image.toCloudStorage pattern used in severity.py.
+    """Deprecated single-band thumbnail download, kept only for any old caller
+    that still imports it directly. Prefer build_landcover/export_landcover/
+    download_landcover (see their docstrings for why).
     """
-    return _download_band(get_forest_type_image(year), aoi, uid, "forest_type", year, local_dir, scale)
+    import os
+    import geemap
+
+    img = get_forest_type_image(year).clip(aoi)
+    os.makedirs(local_dir, exist_ok=True)
+    out_path = os.path.join(local_dir, f"forest_type_{uid}.tif")
+    geemap.ee_export_image(img, filename=out_path, scale=scale, region=aoi, file_per_band=False)
+    return out_path
 
 
 def download_discrete(aoi, uid, year=2019, local_dir="../data/forest_type", scale=100):
-    return _download_band(get_discrete_image(year), aoi, uid, "discrete", year, local_dir, scale)
+    """Deprecated, see download_forest_type's docstring."""
+    import os
+    import geemap
+
+    img = get_discrete_image(year).clip(aoi)
+    os.makedirs(local_dir, exist_ok=True)
+    out_path = os.path.join(local_dir, f"discrete_{uid}.tif")
+    geemap.ee_export_image(img, filename=out_path, scale=scale, region=aoi, file_per_band=False)
+    return out_path
 
 
 def resolve_label(forest_type_code, discrete_code):

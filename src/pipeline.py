@@ -27,7 +27,7 @@ from rasterio.warp import Resampling
 
 from .biomass import download_agb
 from .fires import inner_burn_area, load_fire
-from .forest_type import download_discrete, download_forest_type, resolve_label
+from .forest_type import build_landcover, download_landcover, export_landcover, resolve_label
 from .grids import pad_bounds, read_window, reproject_to_grid
 from .height import height_mosaic_for
 from .severity import build_severity, download_severity, export_severity
@@ -112,6 +112,57 @@ def wait_and_download_severity(submitted, poll_seconds=30):
     return submitted
 
 
+def submit_landcover_tasks(fire_configs, pad=0.15, forest_type_year=2019):
+    """Same two-phase pattern as submit_severity_tasks, for the forest-type +
+    discrete-classification layer (see forest_type.py's export_landcover
+    docstring for why this replaced the old direct-thumbnail download).
+    """
+    submitted = {}
+    for cfg in fire_configs:
+        uid = cfg["uid"]
+        landcover_path = f"../data/forest_type/landcover_{uid}.tif"
+        if os.path.exists(landcover_path):
+            print(f"reusing cached landcover for {uid}: {landcover_path}")
+            submitted[uid] = {"task": None, "landcover_path": landcover_path}
+            continue
+        try:
+            fire = load_fire(uid)
+            bounds = pad_bounds(fire.total_bounds, pad)
+            aoi_ee = _ee_rectangle(bounds)
+            image = build_landcover(forest_type_year)
+            task = export_landcover(image, uid, aoi_ee)
+            print(f"submitted landcover export for {uid}")
+            submitted[uid] = {"task": task, "landcover_path": None}
+        except Exception as e:
+            print(f"{uid} FAILED to submit: {e}")
+            submitted[uid] = {"task": None, "landcover_path": None, "error": str(e)}
+    return submitted
+
+
+def wait_and_download_landcover(submitted, poll_seconds=30):
+    """Same pattern as wait_and_download_severity."""
+    import time
+
+    pending = {uid: s for uid, s in submitted.items() if s["task"] is not None}
+    while pending:
+        done = []
+        for uid, s in pending.items():
+            if not s["task"].active():
+                status = s["task"].status()
+                if status["state"] != "COMPLETED":
+                    print(f"{uid} FAILED: {status}")
+                    s["error"] = status
+                else:
+                    s["landcover_path"] = download_landcover(uid)
+                    print(f"{uid}: landcover ready")
+                done.append(uid)
+        for uid in done:
+            pending.pop(uid)
+        if pending:
+            time.sleep(poll_seconds)
+    return submitted
+
+
 def build_cell_table(
     uid,
     utm_epsg,             # fire's local UTM zone, for the inner-burn buffer
@@ -124,6 +175,7 @@ def build_cell_table(
     min_agb_before=10,
     forest_type_year=2019,
     severity_path=None,   # pass a path already fetched via submit_severity_tasks/wait_and_download_severity
+    landcover_path=None,  # pass a path already fetched via submit_landcover_tasks/wait_and_download_landcover
     fire_start_end=None,  # (start_date, end_date) of the fire itself; required only if firms_map_key is set
     firms_map_key=None,   # set to also fetch brightness_temp (src/temperature.py); off by default
 ):
@@ -195,16 +247,24 @@ def build_cell_table(
         resampling=Resampling.average, nodata_below=-100,
     )
 
-    ft_path = download_forest_type(aoi_ee, uid, year=forest_type_year)
-    ft_arr, tr_ft, crs_ft = read_window(ft_path, bounds, masked=False)
+    if landcover_path is None:
+        landcover_path = f"../data/forest_type/landcover_{uid}.tif"
+        if not os.path.exists(landcover_path):
+            image = build_landcover(forest_type_year)
+            task = export_landcover(image, uid, aoi_ee)
+            _wait_for_task(task)
+            landcover_path = download_landcover(uid)
+        else:
+            print(f"reusing cached landcover for {uid}: {landcover_path}")
+
+    ft_arr, tr_ft, crs_ft = read_window(landcover_path, bounds, masked=False, band=1)
     # nearest, not average: forest type is categorical, a mean of class codes is meaningless
     forest_type_100m = reproject_to_grid(
         ft_arr.astype("float32"), tr_ft, crs_ft, shape, tr_ref, crs_ref,
         resampling=Resampling.nearest,
     )
 
-    discrete_path = download_discrete(aoi_ee, uid, year=forest_type_year)
-    discrete_arr, tr_disc, crs_disc = read_window(discrete_path, bounds, masked=False)
+    discrete_arr, tr_disc, crs_disc = read_window(landcover_path, bounds, masked=False, band=2)
     discrete_100m = reproject_to_grid(
         discrete_arr.astype("float32"), tr_disc, crs_disc, shape, tr_ref, crs_ref,
         resampling=Resampling.nearest,

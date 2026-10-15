@@ -17,6 +17,8 @@ import ee
 
 COLLECTION = "ESA/CCI/Above_Ground_Biomass/V6_0"
 BAND = "agb"
+GCS_BUCKET = "tree-fire-510209-data"
+GCS_PREFIX = "fire-impact-curves/data/cci_agb_ee"
 
 
 def get_agb_image(year):
@@ -27,7 +29,49 @@ def get_agb_image(year):
     return coll.first().select(BAND)
 
 
+def export_agb(image, uid, year, aoi, scale=100, max_pixels=1e9):
+    """Batch export to GCS, same pattern as severity.py/forest_type.py.
+
+    Replaces the earlier direct-thumbnail download (`geemap.ee_export_image`),
+    which failed deterministically ("Invalid dataset dimensions: W x 0") for a
+    non-trivial share of fires once run at scale, the same request-size limit
+    already found and fixed for forest_type.py. The old download_agb's cache
+    check only looked at file existence, not validity, so a corrupted file from
+    an early run (when batches were small enough to rarely hit the limit) kept
+    being silently reused on every later retry.
+    """
+    task = ee.batch.Export.image.toCloudStorage(
+        image=image.clip(aoi),
+        description=f"agb_{uid}_{year}",
+        bucket=GCS_BUCKET,
+        fileNamePrefix=f"{GCS_PREFIX}/agb_{uid}_{year}",
+        region=aoi,
+        scale=scale,
+        maxPixels=max_pixels,
+    )
+    task.start()
+    return task
+
+
+def download_agb_from_bucket(uid, year, local_dir="../data/cci_agb_ee"):
+    """Pull a completed export down via gsutil. Call only after
+    task.status()["state"] == "COMPLETED".
+    """
+    import os
+    import subprocess
+
+    os.makedirs(local_dir, exist_ok=True)
+    out_path = os.path.join(local_dir, f"agb_{uid}_{year}.tif")
+    src = f"gs://{GCS_BUCKET}/{GCS_PREFIX}/agb_{uid}_{year}.tif"
+    subprocess.run(["gsutil", "cp", src, out_path], check=True)
+    return out_path
+
+
 def download_agb(aoi, uid, year, local_dir="../data/cci_agb_ee", scale=100):
+    """Deprecated single-shot thumbnail download, kept only for any old caller
+    that still imports it directly. Prefer export_agb/download_agb_from_bucket
+    (see export_agb's docstring for why).
+    """
     import os
     import geemap
 

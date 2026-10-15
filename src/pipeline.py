@@ -25,7 +25,7 @@ import numpy as np
 import pandas as pd
 from rasterio.warp import Resampling
 
-from .biomass import download_agb
+from .biomass import download_agb, download_agb_from_bucket, export_agb, get_agb_image
 from .fires import inner_burn_area, load_fire
 from .forest_type import build_landcover, download_landcover, export_landcover, resolve_label
 from .grids import pad_bounds, read_window, reproject_to_grid
@@ -163,6 +163,62 @@ def wait_and_download_landcover(submitted, poll_seconds=30):
     return submitted
 
 
+def submit_agb_tasks(fire_configs, pad=0.15):
+    """Same two-phase pattern as submit_severity_tasks, for AGB (see
+    biomass.py's export_agb docstring for why this replaced the old
+    direct-thumbnail download). One fire needs 2-3 years of AGB, so this
+    submits one task per (uid, year) pair, keyed as "{uid}_{year}".
+    """
+    submitted = {}
+    for cfg in fire_configs:
+        uid = cfg["uid"]
+        years = sorted(set([cfg["agb_before_year"], *cfg["agb_after_years"]]))
+        for yr in years:
+            key = f"{uid}_{yr}"
+            agb_path = f"../data/cci_agb_ee/agb_{uid}_{yr}.tif"
+            if os.path.exists(agb_path):
+                print(f"reusing cached AGB {yr} for {uid}: {agb_path}")
+                submitted[key] = {"task": None, "agb_path": agb_path}
+                continue
+            try:
+                fire = load_fire(uid)
+                bounds = pad_bounds(fire.total_bounds, pad)
+                aoi_ee = _ee_rectangle(bounds)
+                image = get_agb_image(yr)
+                task = export_agb(image, uid, yr, aoi_ee)
+                print(f"submitted AGB export for {uid} {yr}")
+                submitted[key] = {"task": task, "agb_path": None}
+            except Exception as e:
+                print(f"{key} FAILED to submit: {e}")
+                submitted[key] = {"task": None, "agb_path": None, "error": str(e)}
+    return submitted
+
+
+def wait_and_download_agb(submitted, poll_seconds=30):
+    """Same pattern as wait_and_download_severity. Keys are "{uid}_{year}"."""
+    import time
+
+    pending = {key: s for key, s in submitted.items() if s["task"] is not None}
+    while pending:
+        done = []
+        for key, s in pending.items():
+            if not s["task"].active():
+                status = s["task"].status()
+                if status["state"] != "COMPLETED":
+                    print(f"{key} FAILED: {status}")
+                    s["error"] = status
+                else:
+                    uid, yr = key.rsplit("_", 1)
+                    s["agb_path"] = download_agb_from_bucket(uid, int(yr))
+                    print(f"{key}: AGB ready")
+                done.append(key)
+        for key in done:
+            pending.pop(key)
+        if pending:
+            time.sleep(poll_seconds)
+    return submitted
+
+
 def build_cell_table(
     uid,
     utm_epsg,             # fire's local UTM zone, for the inner-burn buffer
@@ -176,6 +232,7 @@ def build_cell_table(
     forest_type_year=2019,
     severity_path=None,   # pass a path already fetched via submit_severity_tasks/wait_and_download_severity
     landcover_path=None,  # pass a path already fetched via submit_landcover_tasks/wait_and_download_landcover
+    agb_paths=None,       # pass {year: path} already fetched via submit_agb_tasks/wait_and_download_agb
     fire_start_end=None,  # (start_date, end_date) of the fire itself; required only if firms_map_key is set
     firms_map_key=None,   # set to also fetch brightness_temp (src/temperature.py); off by default
 ):
@@ -201,7 +258,10 @@ def build_cell_table(
     agb, tr_ref, crs_ref, shape = {}, None, None, None
     agb_years = sorted(set([agb_before_year, *agb_after_years]))
     for yr in agb_years:
-        agb_path = download_agb(aoi_ee, uid, yr)
+        if agb_paths is not None and yr in agb_paths:
+            agb_path = agb_paths[yr]
+        else:
+            agb_path = download_agb(aoi_ee, uid, yr)
         agb[yr], tr_ref, crs_ref = read_window(agb_path, bounds)
         shape = agb[yr].shape
 

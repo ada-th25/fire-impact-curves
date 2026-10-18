@@ -34,12 +34,27 @@ def read_window(path, bounds, masked=True, bounds_crs="EPSG:4326", band=1):
 
 
 def reproject_to_grid(arr, src_transform, src_crs, dst_shape, dst_transform, dst_crs,
-                       resampling=Resampling.average, nodata_below=None):
+                       resampling=Resampling.average, nodata_below=None, src_nodata=None):
     """Resample `arr` onto a different grid (e.g. 30 m dNBR onto a 100 m biomass grid).
 
+    `src_nodata`, if set, is passed straight to `reproject()` so GDAL's resampler
+    correctly excludes nodata source pixels from the average (or whichever kernel)
+    instead of blending them in as real values. This matters a lot whenever a
+    source raster has a non-trivial internal nodata fraction (e.g. cloud gaps),
+    not just edge pixels: found via a biomass-model comparison where ~35% nodata
+    pixels, averaged in uncaught by the old nodata_below-only approach, silently
+    biased 100 m cell means down by ~3x (found comparing against an external
+    biomass product, not caught by any layer used in the main pipeline so far,
+    but the same bug exists wherever reproject_to_grid is called without
+    src_nodata - worth checking any layer with a meaningful internal nodata
+    fraction before trusting its averaged values).
+
     `nodata_below`, if set, replaces output values below that threshold with NaN
-    after reprojecting (useful when NaNs had to be filled with a sentinel before
-    reprojecting, since `reproject` does not handle NaN source pixels well).
+    after reprojecting - a cruder fallback for when the input was filled with a
+    very negative sentinel instead of using `src_nodata` (kept for callers not
+    yet updated to pass src_nodata; prefer src_nodata for new code, it only
+    catches output cells where *every* input pixel was nodata, pollutants below
+    that are no longer uncaught the way nodata_below alone would miss them).
     """
     out = np.zeros(dst_shape, dtype="float32")
     reproject(
@@ -47,6 +62,8 @@ def reproject_to_grid(arr, src_transform, src_crs, dst_shape, dst_transform, dst
         src_transform=src_transform, src_crs=src_crs,
         dst_transform=dst_transform, dst_crs=dst_crs,
         resampling=resampling,
+        src_nodata=src_nodata,
+        dst_nodata=np.nan if src_nodata is not None else None,
     )
     if nodata_below is not None:
         out[out < nodata_below] = np.nan

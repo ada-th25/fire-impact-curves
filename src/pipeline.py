@@ -295,16 +295,22 @@ def build_cell_table(
         else:
             print(f"reusing cached severity for {uid}: {severity_path}")
 
+    # src_nodata=-9999: without this, reproject() blends -9999-filled NaN pixels
+    # into the average like real data instead of excluding them, silently biasing
+    # 100m cells wherever the source has an internal nodata fraction (found via
+    # an external biomass-model comparison, see README known issue and src/grids.py's
+    # reproject_to_grid docstring; confirmed to affect 13+ fires here with >5% NaN
+    # in their severity raster, up to 85% for one fire, not just a theoretical risk)
     dnbr_arr, tr_d, crs_d = read_window(severity_path, bounds, band=1)
     dnbr_100m = reproject_to_grid(
         np.nan_to_num(dnbr_arr, nan=-9999).astype("float32"), tr_d, crs_d, shape, tr_ref, crs_ref,
-        resampling=Resampling.average, nodata_below=-100,
+        resampling=Resampling.average, src_nodata=-9999,
     )
 
     rbr_arr, tr_r, crs_r = read_window(severity_path, bounds, band=2)
     rbr_100m = reproject_to_grid(
         np.nan_to_num(rbr_arr, nan=-9999).astype("float32"), tr_r, crs_r, shape, tr_ref, crs_ref,
-        resampling=Resampling.average, nodata_below=-100,
+        resampling=Resampling.average, src_nodata=-9999,
     )
 
     if landcover_path is None:

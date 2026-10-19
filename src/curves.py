@@ -140,3 +140,62 @@ def fit_all_groups(all_cells, height_col="height_class", forest_type_col="forest
     for (h, ft), grp in usable.groupby([height_col, forest_type_col], observed=True):
         results[(h, ft)] = fit_group(grp, dnbr_col=dnbr_col, loss_col=loss_col)
     return pd.DataFrame(results).T
+
+
+def leave_one_fire_out_cv(df, dnbr_col="dnbr", loss_col="loss2022", min_fires=3, min_cells=200):
+    """For each fire in `df`, refit the curve on every OTHER fire, then predict
+    this fire's own per-severity-class mean loss (using its own mean `dnbr_col`
+    in that class as x). This is the real test of whether a curve generalises to
+    a fire it has not seen, which fit quality on the fires used to build it does
+    not tell you - a curve can fit its own training fires well while still being
+    a poor predictor for a new one.
+
+    Returns one row per (held-out fire, severity class): actual loss, predicted
+    loss, and their difference. `fit_status` records whether the refit (on the
+    other fires) was itself degenerate, filter to "fitted" before trusting a
+    residual at face value.
+    """
+    records = []
+    for uid in df["uid"].unique():
+        held_out = df[df["uid"] == uid]
+        train = df[df["uid"] != uid]
+        fit = fit_group(train, dnbr_col=dnbr_col, loss_col=loss_col, min_fires=min_fires, min_cells=min_cells)
+        if fit["status"] not in ("fitted", "degenerate_fit"):
+            continue  # too few other fires to even attempt a refit without this one
+        for sev, grp in held_out.groupby("severity", observed=True):
+            if len(grp) == 0:
+                continue
+            x = grp[dnbr_col].mean()
+            actual = grp[loss_col].mean()
+            predicted = logistic(x, fit["l_max"], fit["k"], fit["x0"])
+            records.append({
+                "uid": uid, "severity": sev, "n_cells": len(grp),
+                "actual": actual, "predicted": predicted, "residual": actual - predicted,
+                "fit_status": fit["status"],
+            })
+    return pd.DataFrame(records)
+
+
+def cross_validate_all_groups(all_cells, height_col="height_class", forest_type_col="forest_type_label",
+                               dnbr_col="dnbr", loss_col="loss2022",
+                               exclude_forest_types=("unknown", "not_forest")):
+    """Runs leave_one_fire_out_cv per height x forest-type group and summarises
+    the error, restricted to folds where the refit itself was not degenerate
+    (status == "fitted"), since a degenerate refit's "prediction" is not a
+    meaningful baseline to measure error against.
+    """
+    rows = []
+    usable = all_cells[~all_cells[forest_type_col].isin(exclude_forest_types)]
+    for (h, ft), grp in usable.groupby([height_col, forest_type_col], observed=True):
+        cv = leave_one_fire_out_cv(grp, dnbr_col=dnbr_col, loss_col=loss_col)
+        cv = cv[cv["fit_status"] == "fitted"]
+        if len(cv) == 0:
+            rows.append({"height_class": h, "forest_type": ft, "n_folds": 0,
+                          "mae": np.nan, "rmse": np.nan, "bias": np.nan})
+            continue
+        err = cv["residual"]
+        rows.append({
+            "height_class": h, "forest_type": ft, "n_folds": len(cv),
+            "mae": err.abs().mean(), "rmse": np.sqrt((err ** 2).mean()), "bias": err.mean(),
+        })
+    return pd.DataFrame(rows)

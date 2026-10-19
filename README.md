@@ -303,6 +303,37 @@ Traced this to a second bug in `reproject_to_grid` (`src/grids.py`), the shared 
 
 Checked whether this same bug affected the main 154-fire dataset.** Scanned every cached severity file for internal NaN fraction directly (not via `masked=True`, which can't detect nodata unless the file declares a formal nodata tag, these Earth Engine exports don't): 13 of 223 fires had over 5% NaN, one as high as 85%, confirming this was a real risk here too, not just in the Artio test. Fixed the same bug in `pipeline.py`'s `dnbr`/`rbr` reprojection calls and re-ran the 17 affected fires that are part of the main dataset (2 of the top-NaN fires, `2017_17487` and `2016_35438`, belong to a separate, not-yet-written-up exploratory test of whether loss keeps rising for several years after a fire using older 2016-2018 fires, not this dataset). **Result: no group's `fitted`/`degenerate_fit`/`insufficient_data` status changed**, and almost every `l_max` is unchanged or barely moved. The one real shift is Deciduous Needleleaf `10-20m` (`l_max` 0.092 to 0.163, that group contained one of the worst-affected fires), but it was `degenerate_fit` before and still is, so no existing conclusion changes. Worth having found and fixed regardless, confirms the pipeline handles nodata correctly going forward, but the bug's actual impact on results already reported was minimal.
 
+## 19. Leave-one-fire-out cross-validation: a real accuracy number, not just fit quality
+
+Fit quality on the fires a curve was built from does not say whether it predicts a *new* fire well, a curve can look clean on its own training data while still generalising poorly. Implemented `leave_one_fire_out_cv`/`cross_validate_all_groups` (`src/curves.py`): for each fire in a group, refit on every other fire, then predict that held-out fire's own per-severity-class loss and compare to what actually happened. Run on the 154-fire dataset:
+
+| Group | n_folds | MAE | RMSE | bias |
+|---|---|---|---|---|
+| `<10m` deciduous_broadleaf | 80 | 0.258 | 0.441 | +0.090 |
+| `<10m` evergreen_broadleaf | 121 | 0.238 | 0.358 | -0.001 |
+| `<10m` mixed | 6 | 0.285 | 0.313 | -0.285 |
+| `10-20m` deciduous_broadleaf | 102 | 0.265 | 0.337 | +0.115 |
+| `10-20m` evergreen_broadleaf | 137 | 0.204 | 0.289 | +0.069 |
+| `10-20m` evergreen_needleleaf | 93 | 0.162 | 0.224 | +0.014 |
+| `10-20m` mixed | 50 | 0.156 | 0.235 | +0.027 |
+| `>20m` evergreen_needleleaf | 84 | 0.215 | 0.333 | +0.007 |
+
+(Every other group shows `n_folds=0`: these all match groups already `degenerate_fit`/`insufficient_data` in the main fit table, removing one fire from an already-thin or unstable group just keeps it thin or unstable, not a new failure, a consistency check that passed.)
+
+Two findings. First, `10-20m` Evergreen Needleleaf and Mixed are the most trustworthy groups by this test (most folds, lowest error, close to zero bias), a new fire's loss is typically predictable to within ~15-16 percentage points there. Second, **almost every group with enough data to test shows a positive bias**, the curve systematically underpredicts a held-out fire's actual loss. This is independent evidence for the same thing Section 14's year-over-year check suggested, loss is still rising within the 1-2 year window most curves are built from, so a curve fitted on that window understates the eventual true loss. `<10m` Mixed is a genuine edge case: only 6 of its 22 fires produce a stable refit when left out, most single-fire removals leave that group unstable, meaning it sits right on the boundary of being usable rather than clearly on one side.
+
+## 20. Does loss keep rising after a fire? A 5-fire time-elapsed check
+
+The main dataset only has 1-2 years of post-fire biomass data per fire (CCI AGB's own availability caps at 2022), so it cannot directly show whether loss is still increasing when a curve is fitted, only whether it looks lower than expected (Sections 14, 19). To test this directly, picked fires from 2016-2018 instead, old enough that CCI already has 4-7 years of post-fire data for them. Height and forest-type labels are not valid pre-fire snapshots for fires this old (Section 4's 2019-height constraint), so this check does not use them, it only needs severity and biomass loss over time, pooled by severity class.
+
+Built 7 candidate fires (2016-2018, North America, picked directly from the Fire Atlas shapefiles rather than the main candidate list, which excludes this period), requesting every CCI year from the fire onward instead of the usual 1-2. 2 failed for reasons unrelated to this check (height-mosaic and forest-type export issues already covered in Sections 17-18), leaving 5 usable fires with 4-6 years of data each.
+
+**First pass, pooling all 5 fires per "years since fire", was misleading.** It showed a dramatic jump in loss around year 5 for every severity class. This turned out to be a composition artefact, not a time effect: the two fires with data out to year 5-6 are 2016 fires, and the fires that drop out past year 4 (the 2018 fires) happen to sit at a lower loss level to begin with. The pooled average rising sharply at year 5 just reflects which fires are still contributing, not those fires' own loss changing.
+
+**Re-did it per fire instead** (this fixes the composition problem, since each line only compares a fire against itself over time): results are mixed, not a single clean story. Two fires (`2016_21304`, `2016_7022`) keep rising through year 2, then genuinely plateau by year 3, flat out to year 6. One fire (`2017_17487`) is still rising at year 4-5, no plateau reached within the data available. Two fires (`2018_7021`, `2018_215`) show no rising trend at all, one even dips slightly before flattening.
+
+**Conclusion**: there is real evidence that loss keeps rising for roughly the first 2-3 years after some fires, supporting the idea that curves built from only 1-2 years of data (the main dataset's limit) understate eventual loss, consistent with Section 19's finding that the curves systematically underpredict held-out fires. There is no evidence it keeps rising indefinitely toward something like 90%, most fires here look closer to settled by year 2-4, not year 1. This is a 5-fire, one-region sample, not strong enough to generalise a specific "wait N years" correction from, but strong enough to say the plateau is at least partly a timing effect, not purely biological.
+
 ## Infrastructure
 
 - GCP project `tree-fire` (display name), project ID `tree-fire-510209`; Vertex AI Workbench instance `tree-fire-workbench`, zone `europe-west2-a`; Python venv `.venv` with earthengine-api, geemap, pandas, geopandas, pyarrow, ipykernel, rasterio, pyogrio.

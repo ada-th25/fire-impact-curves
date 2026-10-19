@@ -173,7 +173,11 @@ def leave_one_fire_out_cv(df, dnbr_col="dnbr", loss_col="loss2022", min_fires=3,
                 "actual": actual, "predicted": predicted, "residual": actual - predicted,
                 "fit_status": fit["status"],
             })
-    return pd.DataFrame(records)
+    # explicit columns: pd.DataFrame([]) has none at all, which breaks any
+    # caller indexing by column name on a group too small for even one fire
+    # to be successfully left out (e.g. only 3 fires total)
+    return pd.DataFrame(records, columns=["uid", "severity", "n_cells", "actual",
+                                           "predicted", "residual", "fit_status"])
 
 
 def cross_validate_all_groups(all_cells, height_col="height_class", forest_type_col="forest_type_label",

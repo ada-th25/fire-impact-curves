@@ -340,6 +340,66 @@ This matters a lot: `2017_17487`, the fire still rising at year 4-5 and the stro
 
 **Revised conclusion**: this 5-fire check is inconclusive, not supportive, of the "loss keeps rising for years" hypothesis. The apparent rising-trend evidence was concentrated in the fires most likely to be contaminated by later, unrelated fires; the clean fires do not show it. Section 19's cross-validation bias (curves tend to underpredict held-out fires) still stands as a separate, dataset-wide finding, but this specific test does not independently confirm a time-elapsed explanation for it, and should not be cited as if it does. A proper version of this check would need either a larger sample of fires confirmed free of later disturbance, or a way to mask out/exclude the overlapping fire's own footprint from the loss calculation, neither attempted here.
 
+## 21. Cross-validation, in concrete terms: two real held-out fires
+
+Section 19's error numbers are averages over many folds, worth grounding in two actual examples, a typical case from each of the two best-validated groups, not cherry-picked best cases.
+
+`2020_167823` (Evergreen Needleleaf, 10-20m), held out while refitting on every other fire in its group: in its `severe` class (273 cells), the refit curve predicted 17.0% loss, the fire actually lost 4.8%, an error of about 12 points, and in this case an overprediction, not an underprediction. `2021_169679` (Mixed, 10-20m): in its `moderate` class (99 cells), predicted 0.4% loss against an actual 9.7%, an underprediction, consistent with this group's measured average bias.
+
+Worth keeping the first example specifically because it cuts against the "curves underpredict" pattern from Section 19. The bias found there is a tendency across many fires, not a rule every individual fire obeys, and a worked example that happens to overpredict is more honest to show than only picking ones that confirm the average.
+
+## 22. A bias correction, tested properly, fixes the ceiling but not the per-fire error
+
+Section 19 found that most groups' curves underpredict a held-out fire's loss, by a measured, group-specific amount. Tried correcting for it: shift each group's `l_max` up by its measured bias, capped at 1.0. Applied only to `l_max` (steepness and midpoint unchanged), a deliberate simplification, the real underprediction may not be uniform across severity classes, and this has not been checked.
+
+**The correction was itself validated, not just assumed to help**, using a leave-one-out version of the bias (each held-out fire's correction computed from every *other* fire's residuals, not its own, to avoid testing the correction against the data it was built from):
+
+| Group | Raw MAE / bias | Corrected MAE / bias |
+|---|---|---|
+| Evergreen Needleleaf, 10-20m | 0.162 / 0.014 | 0.165 / -0.000 |
+| Mixed, 10-20m | 0.156 / 0.027 | 0.157 / -0.000 |
+| Evergreen Broadleaf, 10-20m | 0.204 / 0.069 | 0.205 / -0.000 |
+| Deciduous Broadleaf, 10-20m | 0.265 / 0.115 | 0.258 / -0.000 |
+| Evergreen Needleleaf, >20m | 0.215 / 0.007 | 0.217 / -0.000 |
+
+The bias is reliably removed (correction works as designed), but MAE barely moves, and gets slightly worse for three of five groups. Only `Deciduous Broadleaf`, which had the largest bias relative to its noise, improved meaningfully. **Conclusion**: the remaining error in most groups is genuine fire-to-fire variation, not a shared, correctable offset, a bias correction can only fix the latter. Keep the correction for reporting a more honest eventual-loss ceiling (it is evidence-based, not a guess), but it is not a substitute for more fires, which is the only lever that addresses noise.
+
+Adjusted ceilings (the five usable groups, raw l_max vs corrected): Deciduous Broadleaf 10-20m 18.1% -> 29.6%, Evergreen Broadleaf 10-20m 24.0% -> 30.9%, Evergreen Needleleaf 10-20m 17.1% -> 18.5%, Mixed 10-20m 15.4% -> 18.1%, Evergreen Needleleaf >20m 39.6% -> 40.3%. Even corrected, none of these approach 60-90%, the shifts are real but modest, which is itself evidence that the gap to near-total loss is not a measurement-bias artefact.
+
+## 23. NDVI tested as an alternative to biomass loss, found not to track it
+
+Tested whether NDVI (vegetation greenness from Sentinel-2) could supplement or replace biomass as the loss measure, same before/after composite approach as dNBR (`src/ndvi.py`, mirrors `severity.py`'s pattern exactly, including the explicit `toFloat()` cast that fixed the earlier dNBR/RBR dtype export bug). Ran it on 15 fires across multiple forest types.
+
+**Result: no usable relationship.** Of the 15 fires, only 3 had enough valid cells to test at all (an NDVI loss value needs both the pre- and post-fire pixel to be cloud-free, so any gap in either kills that cell, a stricter requirement than dNBR's own, and 12 of 15 fires lost nearly all their cells to this). In the 3 fires that could be tested, correlation between NDVI loss and biomass loss was essentially zero (-0.006, +0.002, +0.030), and the magnitudes did not agree either, in one fire NDVI showed a much larger drop than biomass (41% vs 6%), in another they coincided (18% vs 18%), in a third NDVI actually increased after the fire while biomass showed almost no change, consistent with fast-regrowing understory vegetation greening up well before the actual carbon loss is reflected.
+
+**Conclusion**: NDVI, computed this directly, is not a usable substitute or supplement for biomass as a carbon-loss measure here. It also showed a second, independent weakness, markedly higher sensitivity to cloud cover than dNBR, on top of not tracking the thing we need measured.
+
+## 24. Two externally-suggested resources evaluated, both ruled out
+
+**A Hugging Face biomass model** (`vertify/biomass-model`, StableResNet architecture): checked both its model card and underlying GitHub repo. Trained and validated against LiDAR reference maps from four tropical research sites only (two in India, one in India, one in Thailand), despite the model card describing broad applicability across tropical, temperate and boreal forest. No comparison against CCI or GEDI reported. Requires Sentinel-1 radar and a DEM as inputs, infrastructure not built in this project. As a passive biomass estimator, it most likely shares CCI's own core limitation (slow to register loss from standing dead trees), not a different one, so even disregarding the infrastructure cost and narrow validation, it is unlikely to solve the actual problem this project has with CCI.
+
+**A Hugging Face wildfire dataset** (`moritzrengert1/wildfire_global`): built for evaluating vision-language models on burn severity classification, not a biomass or carbon dataset. Contains only severity labels and 224x224 pixel image chips, no biomass measurements, so it cannot supply the before/after carbon measurement the curves are built from, under any framing.
+
+Neither pursued further.
+
+## 25. Checked for a newer biomass release, not actually available yet
+
+Considered adopting a newer CCI Biomass release (covering through 2024, not just 2022) to directly address the limited post-fire observation window (Sections 19, 22). Checked two sources before committing to this: an Earth Engine community-hosted asset (`projects/sat-io/open-datasets/ESA/ESA_CCI_AGB`) turned out, on inspection, to be a mirror of the existing v6.0 data (same years, 2007-2022, explicit `'product_version': '6.0'` in its metadata), not a newer version. CEDA, the dataset's own official host, confirms directly that v6.0 is current and 2023/2024 data "are not yet available." **No usable newer release exists yet.** Worth re-checking periodically, not worth building anything around until it actually ships.
+
+## 26. Steep terrain confirmed as a cause of implausible short-height readings, but not a universal one
+
+Known issue #8 (GLAD height unreliable on steep terrain) was a suspected cause, based on one fire's implausible height/biomass combinations, never directly checked against a terrain layer. Pulled SRTM-derived slope (`USGS/SRTMGL1_003` via Earth Engine) and compared it directly against cells flagged as implausible (height under 10m but biomass over 200 Mg/ha, far more than genuinely short vegetation carries), across three fires in different regions.
+
+**`2020_135`** (Sierra Nevada, where this was first noticed): a clean, strong confirmation. Implausible cells average 27.4 degrees of slope against 16.4 degrees for normal cells (n=1,460 vs 109,641), the two distributions barely overlap. **`2020_112`** (same general Northern California region): same direction, implausible cells steeper (22.8 vs 18.2 degrees), but a much weaker, noisier signal, and far fewer implausible cells (36). **`2020_841874`** (Southeast Asia, a genuinely different region): **the pattern reverses.** Implausible cells show *lower* slope than normal cells (14.9 vs 18.2 degrees), the opposite of the hypothesis.
+
+**Revised conclusion**: steep terrain is a real, confirmed cause of this problem, at least in mountainous temperate terrain (both California fires point the same direction, even if the effect size varies a lot). It is not a universal explanation, the Southeast Asia fire shows no such relationship, and if anything points the other way, meaning something else, most likely dense tropical canopy structure interacting with the height model differently, is responsible for at least some implausible `<10m` readings elsewhere. A usable fix is therefore more likely to need a region- or terrain-type-aware approach than a single global slope threshold, and there may be more than one distinct cause behind the broader `<10m` reliability issue, not one. Worth testing more fires per region before building anything, not generalising from the strong single-fire result that started this.
+
+## 27. A second, targeted scaling round, in progress
+
+Section 19's cross-validation and the noise diagnosis that followed it (checked `Evergreen Broadleaf >20m` and `Deciduous Broadleaf 10-20m` directly: both show a sensible average loss-vs-severity trend, but cell-level standard deviation as large as or larger than the mean, i.e. genuine fire-to-fire noise, not a biased or absent relationship) pointed at more fires, specifically for these two groups, as the correct next fix, not further correction or a different severity metric.
+
+Selected 113 additional fires (53 Deciduous Broadleaf, 60 Evergreen Broadleaf, stratified by GFED region, same method as Section 16's top-up), submitted and building at time of writing. Target: push `Evergreen Broadleaf, >20m` from degenerate to fitted, and reduce `Deciduous Broadleaf, 10-20m`'s error, the largest of the five usable groups. Result not yet known.
+
 ## Infrastructure
 
 - GCP project `tree-fire` (display name), project ID `tree-fire-510209`; Vertex AI Workbench instance `tree-fire-workbench`, zone `europe-west2-a`; Python venv `.venv` with earthengine-api, geemap, pandas, geopandas, pyarrow, ipykernel, rasterio, pyogrio.
@@ -382,12 +442,13 @@ Downloaded on 2 Oct 2026, superseded for biomass by the Earth Engine source belo
 - `grids.py`: generic windowed-read and reproject-to-grid helpers.
 - `biomass.py`: above-ground biomass (ESA CCI Biomass v6.0, Earth Engine asset `ESA/CCI/Above_Ground_Biomass/V6_0`, band `agb`), any fire globally, no tile download needed.
 - `severity.py`: dNBR and RBR (Section 15) from Sentinel-2 via Earth Engine.
+- `ndvi.py`: NDVI pre/post fire from Sentinel-2, tested as an alternative loss measure (Section 23), not part of the main pipeline, found not to track biomass loss.
 - `temperature.py`: brightness temperature from FIRMS, optional, off by default (Section 14).
 - `forest_type.py`: forest type (CGLS-LC100, Earth Engine asset `COPERNICUS/Landcover/100m/Proba-V-C3/Global`, band `forest_type`), any fire globally, legend confirmed in that module's docstring.
 - `height.py`: canopy height (GLAD), continental mosaic looked up by the fire's location, all seven mosaics confirmed and configured (Section 11); GLAD's own data only covers ~52°S-52°N regardless.
 - `pipeline.py`: `build_cell_table(uid, ...)`, ties the above together for one fire; `submit_severity_tasks`/`wait_and_download_severity` for running many fires in parallel (Section 14).
 
-Batch runs live in `notebooks/run_pipeline.ipynb` (Section 13), run top to bottom: imports, fire configs, stratified sampling, submit/wait/build, pooling, curve fitting, plotting. `notebooks/data.ipynb` is the exploratory record of Sections 8-13's one-off diagnostics, not used for batch runs. Remaining open item: the steep-terrain height reliability issue (known issue #8).
+Batch runs live in `notebooks/run_pipeline.ipynb` (Section 13), run top to bottom: imports, fire configs, stratified sampling, submit/wait/build, pooling, curve fitting, plotting. `notebooks/data.ipynb` is the exploratory record of Sections 8-13's one-off diagnostics, not used for batch runs. `notebooks/terrain_exploration.ipynb` is a new, separate exploratory notebook for the steep-terrain check in Section 26, kept apart from the other two so it doesn't compete for resources with an active batch run. Remaining open item: the steep-terrain height reliability issue (known issue #8), now with direct evidence behind it (Section 26), not yet built into the pipeline as an actual filter.
 
 ## References
 

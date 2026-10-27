@@ -394,11 +394,51 @@ Known issue #8 (GLAD height unreliable on steep terrain) was a suspected cause, 
 
 **Revised conclusion**: steep terrain is a real, confirmed cause of this problem, at least in mountainous temperate terrain (both California fires point the same direction, even if the effect size varies a lot). It is not a universal explanation, the Southeast Asia fire shows no such relationship, and if anything points the other way, meaning something else, most likely dense tropical canopy structure interacting with the height model differently, is responsible for at least some implausible `<10m` readings elsewhere. A usable fix is therefore more likely to need a region- or terrain-type-aware approach than a single global slope threshold, and there may be more than one distinct cause behind the broader `<10m` reliability issue, not one. Worth testing more fires per region before building anything, not generalising from the strong single-fire result that started this.
 
-## 27. A second, targeted scaling round, in progress
+## 27. A second, targeted scaling round: a mixed result, not a clean win
 
 Section 19's cross-validation and the noise diagnosis that followed it (checked `Evergreen Broadleaf >20m` and `Deciduous Broadleaf 10-20m` directly: both show a sensible average loss-vs-severity trend, but cell-level standard deviation as large as or larger than the mean, i.e. genuine fire-to-fire noise, not a biased or absent relationship) pointed at more fires, specifically for these two groups, as the correct next fix, not further correction or a different severity metric.
 
-Selected 113 additional fires (53 Deciduous Broadleaf, 60 Evergreen Broadleaf, stratified by GFED region, same method as Section 16's top-up), submitted and building at time of writing. Target: push `Evergreen Broadleaf, >20m` from degenerate to fitted, and reduce `Deciduous Broadleaf, 10-20m`'s error, the largest of the five usable groups. Result not yet known.
+Selected 113 additional fires (53 Deciduous Broadleaf, 60 Evergreen Broadleaf, stratified by GFED region, same method as Section 16's top-up). 111 of 113 succeeded (2 failed, not investigated, a small enough loss not to chase). Dataset grew from 154 to 265 fires, 507,169 to 592,048 cells.
+
+**A third bug found during this round, same family as the nodata issue in Section 18.** `height_class` (the `<10m`/`10-20m`/`>20m` category) is not part of `build_cell_table`'s output, it is derived separately, by the pooling step that first builds `full`, from the raw `height` column. That derivation was never reapplied to the 111 new fires before concatenating them in, so they carried a missing `height_class`, and every group-by silently dropped them, no error, just quietly excluded, producing results identical to the pre-top-up run despite `full` genuinely containing the new cells. Caught by checking `full["height_class"].isna().sum()` directly rather than trusting that a non-error result was a correct one. Fixed by reapplying the original binning (`pd.cut(full["height"], [0, 10, 20, 100], labels=[...])`) to the whole, combined table.
+
+**The actual result, once the data was genuinely updated:**
+
+| Group | Before: status / l_max / n_fires / cells | After: status / l_max / n_fires / cells |
+|---|---|---|
+| Mixed, >20m | degenerate / - / 18 / 303 | **fitted** / 18.3% / 24 / 842 |
+| Deciduous Broadleaf, 10-20m | fitted / 18.1% / 71 / 6,508 | fitted / 20.2% / 102 / 8,014 |
+| Evergreen Broadleaf, >20m | degenerate / - / 48 / 31,339 | still degenerate / - / 93 / 76,745 |
+| Evergreen Broadleaf, 10-20m | fitted / 24.0% / 75 / 52,865 | fitted / 31.4% / 145 / 72,625 |
+
+One genuine new group (`Mixed, >20m`, thin and noisy, MAE 0.237, the weakest of the six, worth saying so plainly rather than presenting it with the same confidence as the better-validated groups). One target partially helped (`Deciduous Broadleaf, 10-20m`'s cross-validated MAE improved from 0.265 to 0.249, though its bias did not improve). One target unresolved (`Evergreen Broadleaf, >20m` is still degenerate, nearly doubling its fires changed *which* parameter fails, not whether it fails, its ceiling parameter now has a standard error in the millions). And one group that was not a target and was not broken got measurably worse (`Evergreen Broadleaf, 10-20m`'s cross-validated MAE rose from 0.204 to 0.216, and its curve shape shifted substantially, despite looking visually plausible on the plot, a good concrete example of why a clean-looking chart is not the same as a validated one).
+
+**Conclusion**: "more fires fixes noise" was too simple a rule. It worked for one group, partially helped another, did not fix the main target, and destabilised a group that was already fine. The most likely explanation is that this batch of fires is not simply "more of the same", it introduces real heterogeneity (different regions, conditions) that does not blend cleanly into `Evergreen Broadleaf` specifically. Reporting this honestly, including the regression, rather than keeping whichever version of the data makes each group look best.
+
+**Bias correction, redone on this updated dataset** (supersedes Section 22's table, same method):
+
+| Group | Raw l_max | Adjusted l_max |
+|---|---|---|
+| Deciduous Broadleaf, 10-20m | 20.2% | 32.3% |
+| Evergreen Broadleaf, 10-20m | 31.4% | 38.3% |
+| Evergreen Needleleaf, 10-20m | 17.1% | 17.9% |
+| Mixed, 10-20m | 15.6% | 19.6% |
+| Evergreen Needleleaf, >20m | 39.6% | 40.3% |
+| Mixed, >20m | 18.3% | 21.4% |
+
+Same conclusion as before: real, modest shifts, nothing approaching 60-90%.
+
+## 28. Drought (SPEI-12) tested as a candidate explanatory factor, no evidence found so far
+
+Artio supplied a global SPEI-12 drought dataset (`spei12.nc`, 0.5 degree monthly grid, 1901-2023, negative values dry, positive wet), suggested as a possible addition. SPEI's grid is far coarser than the 100m biomass grid, so unlike height or severity this is naturally a single value per fire, not a per-pixel layer, which simplifies testing it: rather than rebuilding the per-pixel pipeline, checked whether pre-fire drought conditions (nearest grid cell and month before the fire started) correlate with each fire's own residual from leave-one-fire-out cross-validation, i.e. does a fire that was drier than usual beforehand tend to lose more than the severity-only curve predicts.
+
+**Result, on the two groups it could be tested on**: no meaningful relationship. `Evergreen Broadleaf, 10-20m` (n=144): correlation 0.055. `Evergreen Needleleaf, 10-20m` (n=40): correlation -0.020. Both close enough to zero to call null, and not a small-sample issue, 144 fires is larger than several groups already trusted elsewhere in this project, a real effect of meaningful size should show at least some signal at that scale.
+
+**The third, most interesting group could not be tested at all.** `Evergreen Broadleaf, >20m` already has zero valid cross-validation folds (Section 27), its instability means a leave-one-out refit on 92 of its 93 fires is still usually degenerate, so there is no valid per-fire residual to correlate against anything, drought included. That is a dependency, not a workaround, this group cannot be tested this way until its own fit problem is resolved first.
+
+**Caveats, this was a fast, narrow test, not a thorough one.** It used a single nearest-point, nearest-month drought value and averaged each fire's residual across all its severity classes, a real effect with a different lag (drought 1-2 years prior, not the month before), a severity-specific effect, or a non-linear/threshold effect (only mattering in genuinely extreme drought years) would not necessarily show up in a simple linear correlation like this.
+
+**Separately, worth noting**: this test (does drought explain leftover error in the existing severity-based curves) is a narrower question than a planned future piece of work, building a parallel set of loss curves with drought as the primary axis instead of height, the way the current curves use height. This result does not pre-judge that, it is a different exercise, flagged as a later priority, not started.
 
 ## Infrastructure
 

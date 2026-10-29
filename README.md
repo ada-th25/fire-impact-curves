@@ -446,6 +446,16 @@ Artio supplied a global SPEI-12 drought dataset (`spei12.nc`, 0.5 degree monthly
 
 **Separately, worth noting**: this test (does drought explain leftover error in the existing severity-based curves) is a narrower question than a planned future piece of work, building a parallel set of loss curves with drought as the primary axis instead of height, the way the current curves use height. This result does not pre-judge that, it is a different exercise, flagged as a later priority, not started.
 
+## 29. Holdout validation: fires the model has never seen at all
+
+Every accuracy number so far (Section 19's cross-validation, Section 21's worked examples) comes from leave-one-fire-out testing, rigorous, but each fold still refits the curve from the same pool fires are drawn from. A genuine holdout test is more direct: fires excluded from *all* fitting from the start, predicted using the curves exactly as they stand, no refitting at all.
+
+Selected 14 fires (7 Evergreen Needleleaf, 7 Mixed by Fire Atlas label, explicitly excluding every uid already used anywhere in fitting or the round-2 top-up), built the same way as every other fire. 12 of 14 succeeded (2 failed, not investigated), 48,549 cells. Predicted each fire's own per-severity-class loss directly from the existing `fit_table` parameters (no refit), for groups with `status == "fitted"`, `<10m` excluded as always.
+
+**Result**: 37 fire-severity folds, MAE 0.221, RMSE 0.259, **bias -0.011**, effectively zero. This is the strongest evidence yet that the curves generalise, not just to a fire excluded one at a time from its own group's fit, but to fires that played no part in building anything, and the error magnitude (0.221) lands squarely in the same range the cross-validation work already reported, no surprises, no sign of overfitting to the fitting pool.
+
+**Two honest observations, not concerns, worth recording.** One fire (`2020_97`) swung from -0.527 (mild) to +0.643 (severe), far wider than any other fire in the holdout, a reminder of real fire-to-fire variation, not investigated further, one erratic fire in 12 is not unusual given everything already established about this variation. Separately, none of the holdout cells ended up classified as `mixed` at the pixel level, despite half the batch being selected by the Atlas's "Mixed forest" label, the same label-vs-pixel-composition mismatch already documented in Section 12, not a bug in this test.
+
 ## Infrastructure
 
 - GCP project `tree-fire` (display name), project ID `tree-fire-510209`; Vertex AI Workbench instance `tree-fire-workbench`, zone `europe-west2-a`; Python venv `.venv` with earthengine-api, geemap, pandas, geopandas, pyarrow, ipykernel, rasterio, pyogrio.

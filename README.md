@@ -456,6 +456,20 @@ Selected 14 fires (7 Evergreen Needleleaf, 7 Mixed by Fire Atlas label, explicit
 
 **Two honest observations, not concerns, worth recording.** One fire (`2020_97`) swung from -0.527 (mild) to +0.643 (severe), far wider than any other fire in the holdout, a reminder of real fire-to-fire variation, not investigated further, one erratic fire in 12 is not unusual given everything already established about this variation. Separately, none of the holdout cells ended up classified as `mixed` at the pixel level, despite half the batch being selected by the Atlas's "Mixed forest" label, the same label-vs-pixel-composition mismatch already documented in Section 12, not a bug in this test.
 
+## 30. Height-bin coarseness tested directly, a real signal, not another dead end
+
+Raised as a question: is some of the fire-to-fire "noise" already documented actually an artefact of binning height into just three wide categories (`<10m`, `10-20m`, `>20m`), rather than genuine randomness? Specifically worth checking against `Evergreen Broadleaf, 10-20m`, both because it's well populated and because it's the group that unexpectedly got worse after Section 27's fire top-up, an unexplained result at the time.
+
+Tested directly: for each of the group's 144 fires, correlated its own actual mean height (the raw, continuous value, not the bin label) against its cross-validation residual.
+
+**Result: correlation -0.213.** A real, moderate signal, clearly different from the near-zero correlations found for drought (0.055, -0.020, Section 28). The direction makes ecological sense: fires with shorter mean height within the bin (closer to 10m) tend to be underpredicted, fires with taller mean height (closer to 20m) tend to be overpredicted, consistent with a genuine, continuous height effect that a 10-metre-wide category smooths over and loses.
+
+**This does not explain the Section 27 regression, though.** Checked whether the 111 new fires skewed to a different height than the original 75, they don't (14.4m vs 14.7m average, similar spread). Whatever caused that group to get worse after the top-up, it isn't this. That remains unexplained.
+
+**Conclusion**: the most promising, evidence-backed methodological lead found in this project so far, stronger than drought, NDVI, or any of the externally-suggested resources, all of which came back null or unusable. Worth pursuing properly: treating height as continuous rather than three bins, at least for this group, rather than a general suggestion, this one now has a measured effect size behind it.
+
+**Tested properly, and it doesn't justify a rebuild.** Fit a leave-one-out validated height correction (for each fire, fit the height-to-residual relationship on every *other* fire, apply it to the held-out one, same discipline as the Section 22 bias correction) on top of the existing curve for this group. Result: MAE 0.200 without the correction, 0.196 with it, about a 2% relative improvement. Same pattern as Section 22: a real, directionally-sensible, statistically distinguishable signal that does not translate into a meaningful practical gain once properly validated out of sample, because most of the remaining error is still irreducible fire-to-fire noise this factor doesn't explain away. **Decision: not pursuing a continuous-height rebuild.** The validated test showed the likely benefit (a 2% MAE improvement) does not justify the cost (redesigning the fitting approach, revalidating every group, replotting), and it's better to learn that before investing in it than after. This closes the investigation as a genuine, complete, negative-for-practical-purposes result, not an abandoned thread.
+
 ## Infrastructure
 
 - GCP project `tree-fire` (display name), project ID `tree-fire-510209`; Vertex AI Workbench instance `tree-fire-workbench`, zone `europe-west2-a`; Python venv `.venv` with earthengine-api, geemap, pandas, geopandas, pyarrow, ipykernel, rasterio, pyogrio.

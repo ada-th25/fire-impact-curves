@@ -498,9 +498,39 @@ The CEO reviewed the project and raised three points, inviting agreement or disa
 
 A first pass looked more promising (filtered MAE 0.135 against an unweighted 0.158), but that compared different sets of folds, filtering drops a fire's severity-class entirely if every one of its cells happens to fall below the stability threshold, which happened for 2 of 26 folds here, and those two happened to be the group's worst-predicted folds. Recomputed all three fixes on the identical 24 folds where filtering left at least one cell, and the apparent improvement disappeared, filtering is marginally worse, not better, once compared fairly. Worth recording as a reminder to always check that a "better" number isn't actually a smaller, easier subset in disguise.
 
+**Confirmed directly, not just inferred.** Refit the actual curve three ways on the same 15 fires, unweighted (the status quo), down-weighted by stability, and filtered to cells with CV <= 0.3, rather than only checking the fixes on the evaluation side. All three land close together: `l_max` 0.365 (no fix), 0.377 (down-weighted), 0.388 (filtered), same midpoint (x0 0.34-0.36), same general shape. The filtered version also quietly dropped 2 of the 15 fires to zero usable cells, a real cost of that approach beyond its accuracy, not just a wash. The small, consistent upward nudge in `l_max` is what you'd expect from removing or down-weighting the lower, noisier cells, not evidence of a genuinely different underlying relationship.
+
 **Conclusion, now closed.** The underlying phenomenon (pixels whose biomass reading swings a lot year to year, independent of any fire) is real and confirmed on two fires in different regions. Two different ways of using that information (hard exclusion, down-weighting) were tested, properly validated, on two groups with very different baseline noise levels, one of the best-behaved groups and one of the noisier ones. Neither fix improved prediction on either group. This is now a complete, honest negative result, not an abandoned thread, the idea was good and worth testing properly, but the fix as tried does not help. The most likely reason, consistent with everything else found in this project (Sections 22, 30), is that the remaining error is genuine fire-to-fire variation that a per-pixel noise correction cannot reach, the number of fires in the pool, not pixel-level filtering, remains the lever that actually narrows uncertainty.
 
 **Point 3, image compositing for severity.** The CEO's concern was that filtering images by a single cloud-cover percentage per tile could still leave the fire-affected area itself obscured, even when the overall tile looks clear, and suggested quarterly composites instead, the same approach used in Artio's own biomass model. Clarified that the severity pipeline already does something close to this, dNBR and RBR are built from a cloud-masked median composite with cloud checking done pixel by pixel (not a single tile-level percentage), so a cloudy patch over the burn scar is excluded at the pixel level regardless of the overall scene's cloud percentage. Agreed that a wider seasonal window would genuinely help the fires that only have a handful of usable images to draw from. Decided to apply this selectively, to the fires that actually need it, rather than widening the window for every fire, since a wider window risks picking up real seasonal vegetation change that has nothing to do with the fire itself. Not yet implemented.
+
+## 32. Point 3 acted on: widened compositing window for image-sparse fires, correct per-fire but no aggregate gain
+
+Point 3 of Section 31 was agreed to in principle, applying a wider seasonal window to fires whose severity composite only had a handful of usable Sentinel-2 images, rather than the standard 75-day window used for every fire. This section is the follow-through, actually doing it and checking the result, not just the agreement.
+
+**Diagnostic first.** Counted usable (cloud-filtered) Sentinel-2 images in each fire's pre- and post-fire window directly (a cheap Earth Engine query, no export needed) across all 265 fires in the current dataset. 5 fires came back with 2 or fewer images in their sparser window: `2021_12806` (1 image), `2021_17228`, `2022_760657`, `2020_876837`, `2020_279667` (2 each). The drop-off past that point is gradual, not a cliff, so 2-or-fewer is a reasonable, if somewhat arbitrary, line for "needs help".
+
+**Window size chosen deliberately, not maximised.** Checked image counts at 75 (current), 150, and 365 days for these 5 fires. 365 days fixes all 5 convincingly (20-34 images each), but a full year starts drawing in a different season than the fire itself, exactly the seasonal-confound risk flagged when agreeing to this with the CEO. 150 days roughly doubles counts for 4 of the 5, into a healthy 6-13 image range, without leaving the fire's own season by much. `2020_279667` stays thin even at 150 days (post-fire side stuck at 2 images), a persistently cloudy location/season rather than a window-size problem, not chased further. **Decision: 150 days, not 365, for the fires that need it.**
+
+**A caching bug caught before it produced a false result.** Rebuilding these 5 fires the first time gave dNBR values identical to 3 decimal places before and after, despite supposedly using 2-13x more images, an implausible coincidence, not a real result. `submit_severity_tasks` (`src/pipeline.py`) checks for an existing cached severity file on disk and silently reuses it without submitting a new export if found, correct behaviour for a normal re-run, wrong here, since it meant the "rebuild" never actually asked Earth Engine for anything new. Deleted the 5 cached files first, then re-ran, confirming this time that the numbers genuinely changed.
+
+**Result, once genuinely rebuilt.** `2021_12806` moved from 0.748 to 0.148, severe to mild, a dramatic correction. That fire had exactly 1 post-fire image before, so its whole "composite" was really just whatever that single image happened to show. The other 4 fires also moved by real amounts (0.11 to 0.16), not all in the same direction, consistent with genuinely different underlying data rather than a systematic shift.
+
+**But this did not translate into better group-level accuracy.** Re-ran cross-validation on every group these 5 fires belong to, before and after:
+
+| Group | MAE before | MAE after |
+|---|---|---|
+| `<10m` Deciduous Broadleaf | 0.260 | 0.260 |
+| `<10m` Evergreen Broadleaf | 0.258 | 0.259 |
+| `<10m` Mixed | 0.285 | 0.285 |
+| `10-20m` Deciduous Broadleaf | 0.249 | 0.247 |
+| `10-20m` Evergreen Broadleaf | 0.216 | 0.218 |
+| `10-20m` Evergreen Needleleaf | 0.160 | 0.165 |
+| `>20m` Evergreen Needleleaf | 0.210 | 0.219 |
+
+No group improved meaningfully, one moved slightly better, most moved slightly worse. Not a contradiction of the per-fire finding above, simple sample-size arithmetic, 5 fires out of 85-250 in a group cannot move a group average much in either direction, whatever happens to those 5 fires individually.
+
+**Conclusion.** This is a different kind of result to the pixel-stability investigation (Section 31's point 2), not a failed fix, a correctness fix with a real, clearly demonstrated per-fire benefit (one fire's severity reading was genuinely wrong and is now right) that is too small in scale to show up in aggregate accuracy numbers. The corrected data (`full_v2`, these 5 fires' severity rebuilt with the 150-day window) is kept and adopted on correctness grounds regardless of the flat aggregate numbers, a known-wrong value is not kept just because fixing it didn't move a group average. Not pursued further: lowering the image-count threshold to catch more borderline fires, given this result, the expected aggregate benefit of doing so at larger scale is likely still small, though each individual correction would still be worth having.
 
 ## Infrastructure
 

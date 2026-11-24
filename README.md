@@ -580,6 +580,45 @@ Building out the salvage approach from Section 35 across more fires, one result 
 
 **Important: this did not affect any actual result.** Loss and AGB values are computed directly from per-pixel biomass values, never from cell counts or resolution, so every loss number reported in Section 35 (and this section) stands unchanged. Only cell-count-to-area sanity checks need the corrected `0.0001` conversion factor going forward, not the curve-relevant numbers themselves. Worth recording regardless: a wrong assumption can look exactly like a real bug if not checked step by step, and the only way to tell them apart was tracing raw coordinate values rather than trusting any single number in isolation.
 
+## 38. Scaling the salvage approach to 143 fires, catching a data-quality bug along the way, and a cluster that looked permanently stuck but wasn't
+
+Extended Section 36's single-fire result by widening the fire search in two directions at once: every fire in the 6 "safe" (geographically coherent) clusters, not just a handful, and, after reconsidering the reasoning in Section 33, every fire in the 19 "broken" (cross-continent) clusters too, since the salvage technique reads one tile's own prediction directly rather than the combined cluster's merged output, so there was no obvious reason a broken cluster's individual tiles would be wrong just because the cluster's overall AOI was nonsensical.
+
+**That reasoning needed checking, not just trusting.** Of 105 broken-cluster fires with tiles available, 98 had a correctly-matching tile (confirmed by checking the tile's own bounds against the fire's centroid directly, not assumed), but the resulting loss values were often implausible: mean loss -0.24 across the 98, with several fires showing loss around -1.5 (biomass apparently more than doubling after the fire). Traced one bad case (`2021_730207`, `cluster_06`) all the way down: the tile match was correct, nodata handling was correct (`65535` sentinel properly excluded by both files' metadata), but the actual "after" quarter's biomass prediction for that specific tile was genuinely, implausibly high even after excluding nodata, a real data-quality problem with that one (tile, quarter) combination, likely sparse or cloud-contaminated imagery in that quarter's composite, the same general phenomenon already documented for severity composites in Sections 31-32. The problem was tile/quarter-specific, not a property of "broken clusters" as a class: filtering out fires with implausible loss (`< -0.2` or `> 0.95`) left 53 of 98 broken-cluster fires as trustworthy, a genuine expansion of the dataset, not a wholesale rejection of the salvage approach for broken clusters.
+
+**Separately, three safe clusters (`cluster_02`, `04`, `05`) came back with zero usable fires each, despite a week having passed since submission**, which should have been more than enough time if the jobs were genuinely still processing. Checked directly rather than continuing to wait: `gcloud ai custom-jobs list` against the actual `artio-carbon` project (not this project's own GCP project, an easy mistake, the two are different) showed stage1 had in fact succeeded for plenty of quarters in these clusters, just not for `2019-Q4`/`2020-Q4` specifically, the exact "before" baseline quarter every fire in the cluster needs, which had failed outright at stage1 for all three. Every single fire in a cluster sharing the same dependency on one failed quarter is indistinguishable from "the whole cluster is broken" until checked this directly. Resubmitted just those two quarters for each of the three clusters (4 jobs total, not 132), cheap and targeted rather than redoing anything expensive.
+
+**Final combined build: 143 fires, 4,860,222 cells**, run via `attach_height_forest_severity` over the 115 safe-cluster plus 53 filtered broken-cluster fires that fall within GLAD's height coverage. This is a large enough sample that several height x forest-type groups now sit well above this project's own stated trust threshold (`10-20m deciduous_broadleaf`: 116 fires; `10-20m evergreen_broadleaf`: 29 fires, 558,532 cells).
+
+## 39. Validating the first real Artio-based curves, properly, not just checking they converged
+
+8 of 12 height x forest-type groups produced a non-degenerate logistic fit. The 4 degenerate ones were all `<10m` (plus `10-20m mixed`), consistent with the already-known GLAD canopy-height-on-steep-terrain limitation (known issue #8) showing up in Artio data exactly as it does in CCI data, a reassuring consistency check rather than a new problem.
+
+**A fit converging is not the same as a fit being good, and this project's own standard has always been to check that properly, not just report the fit status.** Checked three ways, in increasing order of rigour:
+
+- **Parameter stability** (`param_std_err` from `fit_group`): flagged `>20m deciduous_broadleaf`'s reported steepness std error of exactly `0.0`, an ill-conditioned fit masquerading as a precise one, not a reassuring result.
+- **Leave-one-fire-out cross-validation** (`cross_validate_all_groups`, already built into `src/curves.py`): refits each group on all-but-one fire and checks the held-out prediction, repeated for every fire in the group, not a single train/test split. Confirmed the parameter-stability flag directly: `>20m deciduous_broadleaf` had the worst MAE (0.413) and a strongly negative bias (-0.386) of any group.
+- **Comparison against a naive baseline**, the most important check and the one this project hadn't done before for any curve: does the fitted curve actually predict better than simply guessing the group's average loss, ignoring severity entirely? Built `leave_one_fire_out_baseline` the same way, then compared paired per-fold absolute errors with a one-sided Wilcoxon signed-rank test (rank-based rather than mean-based, chosen specifically because this project has repeatedly found individual-fire outliers large enough to distort a mean-based test, Sections 31, 35, 37).
+
+**Results, by group, MAE improvement over baseline and significance (Wilcoxon, n = paired folds):**
+
+| Group | Curve MAE | Baseline MAE | Improvement | p-value |
+|---|---|---|---|---|
+| `>20m evergreen_needleleaf` | 0.243 | 0.545 | 55% | <0.0001 |
+| `10-20m evergreen_needleleaf` | 0.209 | 0.357 | 42% | <0.0001 |
+| `<10m evergreen_needleleaf` | 0.228 | 0.275 | 17% | 0.028 |
+| `>20m mixed` | 0.210 | 0.245 | 14% | 0.113 (not significant) |
+| `10-20m evergreen_broadleaf` | 0.256 | 0.290 | 12% | 0.033 |
+| `>20m evergreen_broadleaf` | 0.243 | 0.252 | 4% | 0.365 (not significant) |
+| `10-20m deciduous_broadleaf` | 0.295 | 0.308 | 4% | 0.023 |
+| `>20m deciduous_broadleaf` | 0.413 | 0.389 | **-6% (worse than baseline)** | 0.0028 (significant) |
+
+**One genuinely counterintuitive result worth explaining rather than smoothing over**: `>20m deciduous_broadleaf`'s curve has a *worse* mean error than the naive baseline, yet the Wilcoxon test calls the improvement significant. Not a contradiction: Wilcoxon compares ranks, not means, so it says the curve's error is smaller than baseline's on most individual folds, while a handful of catastrophically bad folds drag the mean (MAE) above baseline despite that. In practice this means the curve is usually fine but occasionally fails badly and unpredictably, arguably a worse property for real use than consistent mediocrity, since there's no way to know in advance which fire it'll fail on. Excluded from the validated set on this basis, not just the earlier parameter-stability flag.
+
+**Verdict**: `evergreen_needleleaf` at all three height classes, `10-20m evergreen_broadleaf`, and `10-20m deciduous_broadleaf` are validated, statistically significant improvement over a naive baseline, not just a converged fit. `>20m mixed` shows a promising but not yet statistically confirmed signal (likely underpowered at only 19 paired folds, not evidence of no effect). `>20m evergreen_broadleaf` is weak (flat curve, not significant) and `>20m deciduous_broadleaf` is excluded outright (worse than baseline on average, despite being individually fitted).
+
+**This is a real milestone, not a conclusion to the Artio-biomass work.** 112 of the 115 safe-cluster fires come from a single cluster (`cluster_00`); everything validated above is validated *within* that skew, and leave-one-fire-out CV on this sample cannot catch a bias shared across the whole sample, only genuinely independent fires (`cluster_02/04/05`, now reprocessing after Section 38's fix) can do that. `<10m` remains unusable across all forest types for the same known reason as always. Next step is treating those three clusters' fires as a true held-out test set once available, not folding them straight into a bigger combined fit.
+
 ## Infrastructure
 
 - GCP project `tree-fire` (display name), project ID `tree-fire-510209`; Vertex AI Workbench instance `tree-fire-workbench`, zone `europe-west2-a`; Python venv `.venv` with earthengine-api, geemap, pandas, geopandas, pyarrow, ipykernel, rasterio, pyogrio.
